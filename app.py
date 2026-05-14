@@ -272,7 +272,6 @@ with left_col:
 
 
 # ━━━ RIGHT COLUMN: Nurse Dashboard ━━━
-@st.fragment(run_every=3)
 def nurse_dashboard():
     st.markdown("### 🩺 Nurse Dashboard")
 

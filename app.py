@@ -1,12 +1,20 @@
 """
 AI Triage Nurse — Post-Op Recovery Agent
-Streamlit entry point: two-column layout with patient chat (left) and nurse dashboard (right).
+Streamlit app with two pages: Patient Chat and Nurse Dashboard.
 """
 
 import json
 import os
+import ssl
 import threading
 from pathlib import Path
+
+# ─── Norton TLS Fix (local dev only) ───
+# Norton AV intercepts HTTPS on local machine. Not needed on Streamlit Cloud.
+CERT_PATH = Path.home() / "certs" / "cacert.pem"
+if CERT_PATH.exists():
+    os.environ["SSL_CERT_FILE"] = str(CERT_PATH)
+    os.environ["REQUESTS_CA_BUNDLE"] = str(CERT_PATH)
 
 import anthropic
 import streamlit as st
@@ -18,132 +26,305 @@ from src.agents.risk_assessor import assess_risk
 from src.agents.escalator import escalate
 from src.guardrails import check_emergency_bypass, run_guardrails_on_risk_assessment
 
-load_dotenv()
+load_dotenv(override=True)
 
+# ─── API Key: support both .env (local) and st.secrets (Streamlit Cloud) ───
+if not os.getenv("ANTHROPIC_API_KEY"):
+    try:
+        api_key_from_secrets = st.secrets.get("ANTHROPIC_API_KEY", "")
+        if api_key_from_secrets:
+            os.environ["ANTHROPIC_API_KEY"] = api_key_from_secrets
+    except Exception:
+        pass
+
+# ─── Page Config ───
 st.set_page_config(
-    page_title="AI Triage Nurse — Post-Op Recovery",
+    page_title="AI Triage Nurse",
     page_icon="🏥",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
-# ─── Global Styles ───
+# ─── Global CSS ───
 st.markdown("""
 <style>
-    /* Tighter top padding */
-    .block-container { padding-top: 1rem; }
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
-    /* Chat message styling */
-    .stChatMessage { border-radius: 12px; }
-
-    /* Alert banner pulse animation for urgent+ */
-    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.85; } }
-    .alert-urgent { animation: pulse 2s ease-in-out infinite; }
-
-    /* Dashboard section headers */
-    .dash-header {
-        font-size: 13px;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: #666;
-        margin-top: 16px;
-        margin-bottom: 8px;
-        border-bottom: 1px solid #eee;
-        padding-bottom: 4px;
+    /* Base */
+    html, body, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 1rem;
+        max-width: 900px;
     }
 
-    /* Timeline entry */
-    .timeline-entry {
-        font-size: 13px;
-        padding: 4px 0;
-        border-left: 2px solid #ddd;
-        padding-left: 12px;
-        margin-left: 4px;
-    }
-    .timeline-entry.severity-high { border-left-color: #dc3545; }
-    .timeline-entry.severity-med  { border-left-color: #ffc107; }
-    .timeline-entry.severity-low  { border-left-color: #28a745; }
+    /* Hide default Streamlit branding */
+    #MainMenu, footer, header { visibility: hidden; }
 
-    /* Investigation gap badges */
-    .gap-badge {
-        display: inline-block;
-        padding: 4px 10px;
-        border-radius: 6px;
-        font-size: 12px;
-        margin: 2px 0;
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #0f172a 0%, #1e293b 100%);
     }
-    .gap-high   { background: #f8d7da; color: #721c24; border: 1px solid #f5c6cb; }
-    .gap-medium { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
-    .gap-low    { background: #d4edda; color: #155724; border: 1px solid #c3e6cb; }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h1,
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h2,
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] h3,
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] li {
+        color: #e2e8f0 !important;
+    }
 
-    /* Metric cards */
-    .metric-row {
+    /* Page header */
+    .page-header {
         display: flex;
-        gap: 8px;
-        margin-bottom: 12px;
+        align-items: center;
+        gap: 12px;
+        padding: 8px 0 16px 0;
+        border-bottom: 1px solid rgba(255,255,255,0.08);
+        margin-bottom: 20px;
     }
-    .metric-card {
-        flex: 1;
-        background: #f8f9fa;
+    .page-header .logo {
+        width: 44px;
+        height: 44px;
+        background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+        border-radius: 12px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 22px;
+        flex-shrink: 0;
+    }
+    .page-header .title-group h1 {
+        margin: 0;
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: -0.3px;
+    }
+    .page-header .title-group p {
+        margin: 2px 0 0 0;
+        font-size: 12px;
+        color: #64748b;
+    }
+
+    /* Disclaimer */
+    .disclaimer-bar {
+        background: rgba(245, 158, 11, 0.1);
+        border: 1px solid rgba(245, 158, 11, 0.2);
         border-radius: 8px;
-        padding: 12px;
+        padding: 8px 14px;
+        font-size: 12px;
+        color: #f59e0b;
+        text-align: center;
+        margin-bottom: 20px;
+    }
+
+    /* Scenario card */
+    .scenario-card {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 12px;
+        padding: 16px 20px;
+        margin-bottom: 16px;
+    }
+    .scenario-card .patient-name {
+        font-size: 16px;
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+    .scenario-card .patient-detail {
+        font-size: 13px;
+        color: #94a3b8;
+        line-height: 1.5;
+    }
+    .scenario-card .patient-tag {
+        display: inline-block;
+        background: rgba(59,130,246,0.15);
+        color: #60a5fa;
+        font-size: 11px;
+        font-weight: 500;
+        padding: 3px 8px;
+        border-radius: 4px;
+        margin-right: 6px;
+        margin-top: 8px;
+    }
+
+    /* Chat area */
+    .chat-container {
+        min-height: 400px;
+    }
+
+    /* Override Streamlit chat styling */
+    [data-testid="stChatMessage"] {
+        border-radius: 12px !important;
+        padding: 12px 16px !important;
+        margin-bottom: 8px !important;
+    }
+
+    /* User message */
+    [data-testid="stChatMessage"][data-testid-role="user"] {
+        background: rgba(59, 130, 246, 0.08) !important;
+        border: 1px solid rgba(59, 130, 246, 0.15) !important;
+    }
+
+    /* Assistant message */
+    [data-testid="stChatMessage"][data-testid-role="assistant"] {
+        background: rgba(255, 255, 255, 0.04) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+    }
+
+    /* Streamlit button override */
+    .stButton > button[kind="primary"] {
+        background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+        border: none !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        letter-spacing: 0.3px;
+        padding: 10px 24px !important;
+        transition: all 0.2s ease;
+    }
+    .stButton > button[kind="primary"]:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+    }
+
+    /* ─── Nurse Dashboard Styles ─── */
+    .alert-banner {
+        padding: 16px 20px;
+        border-radius: 12px;
+        margin-bottom: 16px;
+        color: white;
+    }
+    .alert-banner .alert-title { font-size: 16px; font-weight: 700; }
+    .alert-banner .alert-body { font-size: 13px; margin-top: 4px; opacity: 0.9; }
+    .alert-routine  { background: linear-gradient(135deg, #059669, #10b981); }
+    .alert-monitor  { background: linear-gradient(135deg, #d97706, #f59e0b); color: #1a1a1a !important; }
+    .alert-urgent   { background: linear-gradient(135deg, #ea580c, #f97316); }
+    .alert-critical { background: linear-gradient(135deg, #dc2626, #ef4444); }
+    .alert-911-now  { background: linear-gradient(135deg, #991b1b, #dc2626); }
+    .alert-system-error { background: linear-gradient(135deg, #475569, #64748b); }
+
+    .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+        margin: 16px 0;
+    }
+    .stat-card {
+        background: rgba(255,255,255,0.04);
+        border: 1px solid rgba(255,255,255,0.08);
+        border-radius: 10px;
+        padding: 14px 12px;
         text-align: center;
     }
-    .metric-card .value {
-        font-size: 24px;
+    .stat-card .stat-value {
+        font-size: 28px;
         font-weight: 700;
-        line-height: 1.2;
+        letter-spacing: -0.5px;
     }
-    .metric-card .label {
-        font-size: 11px;
-        color: #888;
+    .stat-card .stat-label {
+        font-size: 10px;
         text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #64748b;
+        margin-top: 4px;
     }
 
-    /* Scenario description */
-    .scenario-desc {
+    .section-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        color: #475569;
+        margin: 24px 0 10px 0;
+        padding-bottom: 6px;
+        border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .tl-item {
         font-size: 13px;
-        color: #666;
+        padding: 6px 0 6px 16px;
+        border-left: 2px solid rgba(255,255,255,0.1);
+        margin-left: 4px;
+        line-height: 1.5;
+    }
+    .tl-red  { border-left-color: #ef4444; }
+    .tl-yel  { border-left-color: #f59e0b; }
+    .tl-grn  { border-left-color: #10b981; }
+
+    .gap-pill {
+        display: block;
         padding: 8px 12px;
-        background: #f8f9fa;
-        border-radius: 6px;
-        margin-bottom: 8px;
+        border-radius: 8px;
+        font-size: 12px;
+        margin: 4px 0;
+        line-height: 1.4;
+    }
+    .gap-high   { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); color: #fca5a5; }
+    .gap-medium { background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.2); color: #fcd34d; }
+    .gap-low    { background: rgba(16,185,129,0.1); border: 1px solid rgba(16,185,129,0.2); color: #6ee7b7; }
+
+    .pipeline-card {
+        background: rgba(255,255,255,0.02);
+        border: 1px solid rgba(255,255,255,0.06);
+        border-radius: 10px;
+        padding: 14px 16px;
+        font-size: 12px;
+        color: #64748b;
+        line-height: 1.8;
+    }
+    .pipeline-card strong { color: #94a3b8; }
+    .pipeline-card .model-tag {
+        display: inline-block;
+        background: rgba(139,92,246,0.15);
+        color: #a78bfa;
+        font-size: 10px;
+        font-weight: 500;
+        padding: 1px 6px;
+        border-radius: 3px;
+    }
+
+    /* Empty state */
+    .empty-state {
+        text-align: center;
+        padding: 60px 20px;
+    }
+    .empty-state .empty-icon {
+        font-size: 48px;
+        margin-bottom: 12px;
+        opacity: 0.5;
+    }
+    .empty-state p {
+        color: #475569;
+        font-size: 14px;
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ─── Header ───
-st.markdown("""
-<div style="text-align:center; margin-bottom:4px;">
-    <h2 style="margin-bottom:2px;">🏥 AI Triage Nurse</h2>
-    <p style="color:#888; font-size:14px; margin-top:0;">Post-Operative Recovery Monitoring System</p>
-</div>
-<div style="background:#fff3cd;padding:6px 16px;border-radius:4px;margin-bottom:16px;
-text-align:center;font-size:13px;color:#856404;">
-⚠️ <strong>Educational Demo</strong> — Not medical advice. Do not use for real patient care.
-</div>
-""", unsafe_allow_html=True)
-
+# ─── Helpers ───
 SCENARIOS_DIR = Path(__file__).parent / "src" / "scenarios"
 
 
 def load_scenarios() -> dict[str, dict]:
     scenarios = {}
-    for f in sorted(SCENARIOS_DIR.glob("*.json")):
-        data = json.loads(f.read_text())
-        scenarios[data["name"]] = data
+    if SCENARIOS_DIR.exists():
+        for f in sorted(SCENARIOS_DIR.glob("*.json")):
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                scenarios[data["name"]] = data
+            except (json.JSONDecodeError, KeyError):
+                continue
     return scenarios
 
 
-def get_client() -> anthropic.Anthropic:
+def get_client() -> anthropic.Anthropic | None:
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        st.error("Set ANTHROPIC_API_KEY in your .env file.")
-        st.stop()
+        return None
     return anthropic.Anthropic(api_key=api_key)
 
 
+# ─── Init ───
 db.init_db()
 scenarios = load_scenarios()
 
@@ -151,29 +332,62 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
-if "agent_status" not in st.session_state:
-    st.session_state.agent_status = "idle"
 
-left_col, right_col = st.columns([1, 1], gap="large")
+# ─── Check API key ───
+has_api_key = bool(os.getenv("ANTHROPIC_API_KEY"))
+if not has_api_key:
+    st.error(
+        "**ANTHROPIC_API_KEY not found.** "
+        "Create a `.env` file in the project root with:\n\n"
+        "```\nANTHROPIC_API_KEY=sk-ant-your-key-here\n```"
+    )
+    st.stop()
 
-# ━━━ LEFT COLUMN: Patient Chat ━━━
-with left_col:
-    st.markdown("### 💬 Patient Chat")
+# ─── Sidebar Navigation ───
+with st.sidebar:
+    st.markdown("""
+    <div style="padding: 16px 0 20px 0; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 16px;">
+        <div style="display:flex; align-items:center; gap:10px;">
+            <div style="width:36px;height:36px;background:linear-gradient(135deg,#3b82f6,#8b5cf6);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:18px;">🏥</div>
+            <div>
+                <div style="font-size:16px;font-weight:700;color:#f1f5f9;">AI Triage Nurse</div>
+                <div style="font-size:11px;color:#64748b;">Post-Op Recovery Agent</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    page = st.radio(
+        "Navigation",
+        ["💬 Patient Chat", "📊 Nurse Dashboard"],
+        label_visibility="collapsed",
+    )
+
+    st.markdown("---")
+
+    # Scenario selection in sidebar
+    if not scenarios:
+        st.warning("No scenarios found.")
+        st.stop()
 
     scenario_name = st.selectbox(
-        "Select scenario",
+        "Clinical Scenario",
         options=list(scenarios.keys()),
         key="scenario_select",
     )
-
-    # Show scenario description
     selected = scenarios[scenario_name]
+
     st.markdown(
-        f'<div class="scenario-desc">{selected["description"]}</div>',
+        f'<div style="background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.08);'
+        f'border-radius:8px;padding:10px 12px;margin:8px 0;font-size:12px;">'
+        f'<div style="font-weight:600;color:#e2e8f0;">{selected["patient_name"]}</div>'
+        f'<div style="color:#94a3b8;margin-top:2px;">{selected["surgery_type"]} &middot; Day {selected["recovery_day"]}</div>'
+        f'<div style="color:#64748b;margin-top:6px;line-height:1.4;">{selected["description"]}</div>'
+        f'</div>',
         unsafe_allow_html=True,
     )
 
-    if st.button("Start New Session", type="primary", use_container_width=True):
+    if st.button("▶ Start New Session", type="primary", use_container_width=True):
         session_id = db.create_session(
             surgery_type=selected["surgery_type"],
             recovery_day=selected["recovery_day"],
@@ -181,276 +395,279 @@ with left_col:
         )
         st.session_state.session_id = session_id
         st.session_state.chat_messages = []
-        st.session_state.agent_status = "idle"
         st.rerun()
+
+    st.markdown("---")
+
+    # Pipeline info in sidebar
+    st.markdown("""
+    <div style="font-size:10px;text-transform:uppercase;letter-spacing:1px;color:#475569;margin-bottom:8px;font-weight:600;">Agent Pipeline</div>
+    <div style="font-size:11px;color:#64748b;line-height:1.8;">
+        <strong style="color:#94a3b8;">Conversationalist</strong> <span style="background:rgba(139,92,246,0.15);color:#a78bfa;font-size:9px;padding:1px 5px;border-radius:3px;">Sonnet</span><br>
+        <strong style="color:#94a3b8;">Risk Assessor</strong> <span style="background:rgba(139,92,246,0.15);color:#a78bfa;font-size:9px;padding:1px 5px;border-radius:3px;">Sonnet</span><br>
+        <strong style="color:#94a3b8;">Escalator</strong> <span style="background:rgba(59,130,246,0.15);color:#60a5fa;font-size:9px;padding:1px 5px;border-radius:3px;">Haiku</span><br>
+        <span style="color:#475569;">5 guardrails &middot; 21 red flags</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("""
+    <div style="position:absolute;bottom:16px;left:16px;right:16px;font-size:10px;color:#334155;">
+        Educational demo &middot; Not medical advice
+    </div>
+    """, unsafe_allow_html=True)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PAGE: Patient Chat
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+if page == "💬 Patient Chat":
+
+    # Header
+    st.markdown("""
+    <div class="page-header">
+        <div class="logo">💬</div>
+        <div class="title-group">
+            <h1>Patient Chat</h1>
+            <p>Talk to us about how you're feeling after surgery</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(
+        '<div class="disclaimer-bar">'
+        '⚠️ <strong>Educational Demo</strong> — This is not medical advice. Do not use for real patient care.'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
     if st.session_state.session_id:
         session = db.get_session(st.session_state.session_id)
+
         if session:
+            # Active session indicator
             st.markdown(
-                f"**{session['patient_name']}** · "
-                f"`{session['surgery_type']}` · "
-                f"Recovery Day **{session['recovery_day']}**"
-            )
-
-        # Chat history
-        for msg in st.session_state.chat_messages:
-            with st.chat_message(msg["role"]):
-                st.write(msg["content"])
-
-        # Chat input
-        if user_input := st.chat_input("How are you feeling today?"):
-            st.session_state.chat_messages.append({"role": "user", "content": user_input})
-            with st.chat_message("user"):
-                st.write(user_input)
-
-            # GUARDRAIL Layer 1: Emergency keyword bypass
-            emergency = check_emergency_bypass(user_input)
-            if emergency:
-                db.write_alert(
-                    st.session_state.session_id,
-                    emergency["severity"],
-                    emergency["summary"],
-                    signals=emergency["signals"],
-                    recommended_action=emergency["recommended_action"],
-                )
-
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    try:
-                        client = get_client()
-                        reply = run_turn(client, st.session_state.session_id, user_input)
-                    except Exception as e:
-                        reply = f"I'm having trouble responding right now. (Error: {e})"
-                        db.write_alert(
-                            st.session_state.session_id,
-                            "system-error",
-                            f"Conversationalist agent failed: {e}",
-                            signals=["agent_failure"],
-                            recommended_action="Check API key and network connection.",
-                        )
-                st.write(reply)
-
-            # Background: Risk Assessor + Escalator
-            def _run_background_assessment(sid: str):
-                try:
-                    bg_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-                    assessment = assess_risk(bg_client, sid)
-                    if assessment:
-                        checked = run_guardrails_on_risk_assessment(sid, assessment)
-                        if checked.get("guardrail_adjustments", {}).get("score_adjusted"):
-                            db.write_risk_score(
-                                sid,
-                                score=checked["score"],
-                                triggered_signals=checked["triggered_signals"],
-                                reasoning=checked["reasoning"],
-                            )
-                            assessment = checked
-                        escalate(bg_client, sid, assessment)
-                except Exception as e:
-                    db.write_alert(
-                        sid, "system-error",
-                        f"Risk Assessor failed: {e}",
-                        signals=["agent_failure"],
-                        recommended_action="Risk assessment unavailable. Manual review recommended.",
-                    )
-
-            threading.Thread(
-                target=_run_background_assessment,
-                args=(st.session_state.session_id,),
-                daemon=True,
-            ).start()
-
-            st.session_state.chat_messages.append({"role": "assistant", "content": reply})
-    else:
-        st.markdown("""
-        <div style="text-align:center; padding:40px 20px; color:#888;">
-            <p style="font-size:48px; margin-bottom:8px;">👆</p>
-            <p>Select a scenario and click <strong>Start New Session</strong> to begin.</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-
-# ━━━ RIGHT COLUMN: Nurse Dashboard ━━━
-def nurse_dashboard():
-    st.markdown("### 🩺 Nurse Dashboard")
-
-    session_id = st.session_state.get("session_id")
-    if not session_id:
-        st.markdown("""
-        <div style="text-align:center; padding:40px 20px; color:#888;">
-            <p style="font-size:48px; margin-bottom:8px;">⏳</p>
-            <p>Waiting for patient session...</p>
-        </div>
-        """, unsafe_allow_html=True)
-        return
-
-    alerts = db.get_alerts(session_id)
-    symptoms = db.get_symptoms(session_id)
-    vitals = db.get_vitals(session_id)
-    meds = db.get_meds(session_id)
-    risk_scores = db.get_risk_scores(session_id)
-    investigation_gaps = db.get_investigation_gaps(session_id, only_unaddressed=True)
-
-    # ── Alert Banner ──
-    if alerts:
-        latest = alerts[-1]
-        severity = latest["severity"]
-        color_map = {
-            "routine": "#28a745",
-            "monitor": "#ffc107",
-            "urgent": "#fd7e14",
-            "critical": "#dc3545",
-            "911-now": "#dc3545",
-            "system-error": "#6c757d",
-        }
-        icon_map = {
-            "routine": "✅",
-            "monitor": "👁️",
-            "urgent": "⚠️",
-            "critical": "🚨",
-            "911-now": "🆘",
-            "system-error": "⚙️",
-        }
-        text_color = "white" if severity != "monitor" else "#333"
-        color = color_map.get(severity, "#6c757d")
-        icon = icon_map.get(severity, "🔔")
-        pulse_class = "alert-urgent" if severity in ("urgent", "critical", "911-now") else ""
-
-        st.markdown(
-            f"""<div class="{pulse_class}" style="background:{color};color:{text_color};
-            padding:14px 18px;border-radius:10px;margin-bottom:8px;">
-            <div style="font-size:20px;font-weight:700;">{icon} {severity.upper()}</div>
-            <div style="font-size:14px;margin-top:4px;">{latest['summary']}</div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-        if latest.get("recommended_action"):
-            st.caption(f"**Recommended:** {latest['recommended_action']}")
-    else:
-        st.markdown(
-            """<div style="background:#28a745;color:white;padding:14px 18px;border-radius:10px;
-            margin-bottom:8px;">
-            <div style="font-size:20px;font-weight:700;">✅ ALL CLEAR</div>
-            <div style="font-size:14px;margin-top:4px;">No alerts — routine monitoring</div>
-            </div>""",
-            unsafe_allow_html=True,
-        )
-
-    # ── Quick Metrics ──
-    latest_score = risk_scores[-1]["score"] if risk_scores else 0
-    score_color = "#28a745" if latest_score <= 20 else "#ffc107" if latest_score <= 40 else "#fd7e14" if latest_score <= 60 else "#dc3545"
-
-    st.markdown(f"""
-    <div class="metric-row">
-        <div class="metric-card">
-            <div class="value" style="color:{score_color}">{latest_score}</div>
-            <div class="label">Risk Score</div>
-        </div>
-        <div class="metric-card">
-            <div class="value">{len(symptoms)}</div>
-            <div class="label">Symptoms</div>
-        </div>
-        <div class="metric-card">
-            <div class="value">{len(vitals)}</div>
-            <div class="label">Vitals</div>
-        </div>
-        <div class="metric-card">
-            <div class="value">{len(meds)}</div>
-            <div class="label">Meds</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    # ── Risk Score Trend ──
-    if risk_scores:
-        st.markdown('<div class="dash-header">Risk Score Trend</div>', unsafe_allow_html=True)
-        scores = [r["score"] for r in risk_scores[-10:]]
-        st.line_chart(scores, height=120, use_container_width=True)
-
-        latest_risk = risk_scores[-1]
-        if latest_risk.get("reasoning"):
-            st.caption(f"**Assessment:** {latest_risk['reasoning']}")
-        if latest_risk.get("triggered_signals"):
-            signals = latest_risk["triggered_signals"]
-            if isinstance(signals, str):
-                signals = json.loads(signals)
-            if signals:
-                signal_badges = " ".join(
-                    f'`{s}`' for s in signals
-                )
-                st.markdown(f"**Signals:** {signal_badges}")
-
-    # ── Investigation Gaps ──
-    if investigation_gaps:
-        st.markdown('<div class="dash-header">Investigation Gaps</div>', unsafe_allow_html=True)
-        st.caption("Risk Assessor flagged these for follow-up:")
-        for g in investigation_gaps:
-            css_class = f"gap-{g['priority']}"
-            priority_label = g["priority"].upper()
-            st.markdown(
-                f'<div class="gap-badge {css_class}"><strong>[{priority_label}]</strong> {g["question"]}</div>',
-                unsafe_allow_html=True,
-            )
-
-    # ── Clinical Timeline ──
-    st.markdown('<div class="dash-header">Clinical Timeline</div>', unsafe_allow_html=True)
-
-    timeline_items = []
-    for s in symptoms:
-        sev_class = "severity-high" if s["severity"] >= 7 else "severity-med" if s["severity"] >= 4 else "severity-low"
-        icon = "🔴" if s["severity"] >= 7 else "🟡" if s["severity"] >= 4 else "🟢"
-        detail = f' — "{s["free_text"]}"' if s.get("free_text") else ""
-        timeline_items.append((
-            s["logged_at"], sev_class,
-            f'{icon} <strong>{s["name"]}</strong> ({s["severity"]}/10){detail}'
-        ))
-    for v in vitals:
-        timeline_items.append((
-            v["logged_at"], "severity-low",
-            f'📊 <strong>{v["type"]}</strong>: {v["value"]} {v["unit"]}'
-        ))
-    for m in meds:
-        timeline_items.append((
-            m["logged_at"], "severity-low",
-            f'💊 <strong>{m["med_name"]}</strong> ({m["dose"]}) — taken: {m["taken_at"]}'
-        ))
-
-    timeline_items.sort(key=lambda x: x[0])
-
-    if timeline_items:
-        for ts, sev_class, label in timeline_items:
-            time_short = ts.split(" ")[-1][:5] if " " in ts else ts
-            st.markdown(
-                f'<div class="timeline-entry {sev_class}">'
-                f'<span style="color:#999;font-size:11px;">{time_short}</span> {label}'
+                f'<div class="scenario-card">'
+                f'<div class="patient-name">{session["patient_name"]}</div>'
+                f'<div class="patient-detail">{session["surgery_type"]} &middot; Recovery Day {session["recovery_day"]}</div>'
+                f'<span class="patient-tag">Active Session</span>'
                 f'</div>',
                 unsafe_allow_html=True,
             )
+
+            # Chat history
+            for msg in st.session_state.chat_messages:
+                with st.chat_message(msg["role"]):
+                    st.markdown(msg["content"])
+
+            # Chat input
+            if user_input := st.chat_input("How are you feeling today?"):
+                st.session_state.chat_messages.append({"role": "user", "content": user_input})
+                with st.chat_message("user"):
+                    st.markdown(user_input)
+
+                # GUARDRAIL Layer 1: Emergency keyword bypass
+                emergency = check_emergency_bypass(user_input)
+                if emergency:
+                    db.write_alert(
+                        st.session_state.session_id,
+                        emergency["severity"],
+                        emergency["summary"],
+                        signals=emergency["signals"],
+                        recommended_action=emergency["recommended_action"],
+                    )
+
+                # Conversationalist agent
+                with st.chat_message("assistant"):
+                    with st.spinner("Thinking..."):
+                        try:
+                            client = get_client()
+                            reply = run_turn(client, st.session_state.session_id, user_input)
+                        except Exception as e:
+                            reply = "I'm having trouble responding right now. Please try again."
+                            db.write_alert(
+                                st.session_state.session_id,
+                                "system-error",
+                                f"Conversationalist failed: {e}",
+                                signals=["agent_failure"],
+                                recommended_action="Check API key and connection.",
+                            )
+                    st.markdown(reply)
+
+                st.session_state.chat_messages.append({"role": "assistant", "content": reply})
+
+                # Background: Risk Assessor + Escalator
+                def _background_assess(sid: str):
+                    try:
+                        bg_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+                        assessment = assess_risk(bg_client, sid)
+                        if assessment:
+                            checked = run_guardrails_on_risk_assessment(sid, assessment)
+                            if checked.get("guardrail_adjustments", {}).get("score_adjusted"):
+                                db.write_risk_score(
+                                    sid,
+                                    score=checked["score"],
+                                    triggered_signals=checked["triggered_signals"],
+                                    reasoning=checked["reasoning"],
+                                )
+                                assessment = checked
+                            escalate(bg_client, sid, assessment)
+                    except Exception as e:
+                        db.write_alert(
+                            sid, "system-error",
+                            f"Risk Assessor failed: {e}",
+                            signals=["agent_failure"],
+                            recommended_action="Manual review recommended.",
+                        )
+
+                threading.Thread(
+                    target=_background_assess,
+                    args=(st.session_state.session_id,),
+                    daemon=True,
+                ).start()
     else:
-        st.caption("No observations yet.")
+        st.markdown("""
+        <div class="empty-state">
+            <div class="empty-icon">👈</div>
+            <p>Select a scenario from the sidebar and click <strong>Start New Session</strong> to begin.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ── Alert History ──
-    if len(alerts) > 1:
-        st.markdown('<div class="dash-header">Alert History</div>', unsafe_allow_html=True)
-        with st.expander(f"View {len(alerts) - 1} previous alerts"):
-            for a in reversed(alerts[:-1]):
-                sev = a["severity"].upper()
-                st.markdown(f"- **{sev}**: {a['summary']}  \n  _{a['created_at']}_")
 
-    # ── Agent Pipeline Status ──
-    st.markdown('<div class="dash-header">Agent Pipeline</div>', unsafe_allow_html=True)
-    agent_count = 3
-    tool_count = 10  # 4 conversationalist + 6 risk assessor
-    st.markdown(f"""
-    <div style="font-size:12px; color:#888; line-height:1.6;">
-    <strong>Conversationalist</strong> (Sonnet) — 4 tools · patient-facing<br>
-    <strong>Risk Assessor</strong> (Sonnet) — 6 tools · background investigator<br>
-    <strong>Escalator</strong> (Haiku) — alert translator<br>
-    <span style="color:#aaa;">Guardrails: 5 layers active · Red flags: 21 signals</span>
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PAGE: Nurse Dashboard
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+elif page == "📊 Nurse Dashboard":
+
+    st.markdown("""
+    <div class="page-header">
+        <div class="logo" style="background:linear-gradient(135deg,#059669,#10b981);">📊</div>
+        <div class="title-group">
+            <h1>Nurse Dashboard</h1>
+            <p>Real-time clinical monitoring and risk assessment</p>
+        </div>
     </div>
     """, unsafe_allow_html=True)
 
+    session_id = st.session_state.get("session_id")
 
-with right_col:
-    nurse_dashboard()
+    if not session_id:
+        st.markdown("""
+        <div class="empty-state">
+            <div class="empty-icon">⏳</div>
+            <p>Start a patient session from the sidebar to see clinical data here.</p>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # Refresh button
+        if st.button("🔄 Refresh Dashboard", use_container_width=False):
+            st.rerun()
+
+        # Load all data
+        alerts = db.get_alerts(session_id)
+        symptoms = db.get_symptoms(session_id)
+        vitals = db.get_vitals(session_id)
+        meds = db.get_meds(session_id)
+        risk_scores = db.get_risk_scores(session_id)
+        gaps = db.get_investigation_gaps(session_id, only_unaddressed=True)
+
+        # ── Alert Banner ──
+        if alerts:
+            latest = alerts[-1]
+            sev = latest["severity"]
+            icons = {
+                "routine": "✅", "monitor": "👁️", "urgent": "⚠️",
+                "critical": "🚨", "911-now": "🆘", "system-error": "⚙️",
+            }
+            st.markdown(
+                f'<div class="alert-banner alert-{sev}">'
+                f'<div class="alert-title">{icons.get(sev, "🔔")} {sev.upper()}</div>'
+                f'<div class="alert-body">{latest["summary"]}</div>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+            if latest.get("recommended_action"):
+                st.caption(f"**Recommended:** {latest['recommended_action']}")
+        else:
+            st.markdown(
+                '<div class="alert-banner alert-routine">'
+                '<div class="alert-title">✅ ALL CLEAR</div>'
+                '<div class="alert-body">No alerts — routine monitoring</div>'
+                '</div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── Stats Grid ──
+        score = risk_scores[-1]["score"] if risk_scores else 0
+        s_color = "#10b981" if score <= 20 else "#f59e0b" if score <= 40 else "#f97316" if score <= 60 else "#ef4444"
+        st.markdown(f"""
+        <div class="stat-grid">
+            <div class="stat-card"><div class="stat-value" style="color:{s_color}">{score}</div><div class="stat-label">Risk Score</div></div>
+            <div class="stat-card"><div class="stat-value">{len(symptoms)}</div><div class="stat-label">Symptoms</div></div>
+            <div class="stat-card"><div class="stat-value">{len(vitals)}</div><div class="stat-label">Vitals</div></div>
+            <div class="stat-card"><div class="stat-value">{len(meds)}</div><div class="stat-label">Meds Taken</div></div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Risk Score Trend ──
+        if risk_scores:
+            st.markdown('<div class="section-title">Risk Score Trend</div>', unsafe_allow_html=True)
+            scores_list = [r["score"] for r in risk_scores[-10:]]
+            st.line_chart(scores_list, height=120, use_container_width=True)
+
+            latest_risk = risk_scores[-1]
+            if latest_risk.get("reasoning"):
+                st.caption(latest_risk["reasoning"])
+            if latest_risk.get("triggered_signals"):
+                sigs = latest_risk["triggered_signals"]
+                if isinstance(sigs, str):
+                    sigs = json.loads(sigs)
+                if sigs:
+                    st.markdown("**Triggered Signals:** " + " ".join(f"`{s}`" for s in sigs))
+
+        # ── Investigation Gaps ──
+        if gaps:
+            st.markdown('<div class="section-title">Investigation Gaps</div>', unsafe_allow_html=True)
+            for g in gaps:
+                p = g["priority"]
+                st.markdown(
+                    f'<div class="gap-pill gap-{p}">'
+                    f'<strong>[{p.upper()}]</strong> {g["question"]}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+
+        # ── Clinical Timeline ──
+        st.markdown('<div class="section-title">Clinical Timeline</div>', unsafe_allow_html=True)
+
+        items = []
+        for s in symptoms:
+            cls = "tl-red" if s["severity"] >= 7 else "tl-yel" if s["severity"] >= 4 else "tl-grn"
+            dot = "🔴" if s["severity"] >= 7 else "🟡" if s["severity"] >= 4 else "🟢"
+            txt = s.get("free_text", "")
+            detail = f' — <em>"{txt}"</em>' if txt else ""
+            items.append((s["logged_at"], cls, f'{dot} <b>{s["name"]}</b> ({s["severity"]}/10){detail}'))
+        for v in vitals:
+            items.append((v["logged_at"], "tl-grn", f'📊 <b>{v["type"]}</b>: {v["value"]} {v["unit"]}'))
+        for m in meds:
+            items.append((m["logged_at"], "tl-grn", f'💊 <b>{m["med_name"]}</b> ({m["dose"]}) — taken {m["taken_at"]}'))
+
+        items.sort(key=lambda x: x[0])
+
+        if items:
+            for ts, cls, label in items:
+                t = ts.split(" ")[-1][:5] if " " in ts else ""
+                st.markdown(
+                    f'<div class="tl-item {cls}">'
+                    f'<span style="color:#475569;font-size:10px;">{t}</span> {label}'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.caption("No observations yet. Start chatting with the patient.")
+
+        # ── Alert History ──
+        if len(alerts) > 1:
+            st.markdown('<div class="section-title">Alert History</div>', unsafe_allow_html=True)
+            with st.expander(f"{len(alerts) - 1} previous alerts"):
+                for a in reversed(alerts[:-1]):
+                    st.markdown(f"**{a['severity'].upper()}**: {a['summary']}  \n_{a['created_at']}_")

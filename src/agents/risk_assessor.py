@@ -368,7 +368,7 @@ def assess_risk(client: anthropic.Anthropic, session_id: str) -> dict | None:
 
         try:
             response = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-5-20250929",
                 max_tokens=1024,
                 system=[
                     {
@@ -447,7 +447,7 @@ def _fallback_assessment(client: anthropic.Anthropic, session_id: str, system_pr
     )
     try:
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=512,
             system=[{"type": "text", "text": fallback_prompt, "cache_control": {"type": "ephemeral"}}],
             messages=[{"role": "user", "content": "Assess the patient's current risk based on all available data."}],

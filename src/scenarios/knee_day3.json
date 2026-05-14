@@ -1,7 +1,7 @@
 {
-    "name": "Day 3 — Post Knee Replacement",
-    "surgery_type": "Total Knee Replacement",
-    "recovery_day": 3,
-    "patient_name": "Alex",
-    "description": "Standard recovery, day 3 after total knee replacement. Moderate pain expected, mobility improving."
+  "name": "Day 3 - Post Knee Replacement",
+  "surgery_type": "Total Knee Replacement",
+  "recovery_day": 3,
+  "patient_name": "Alex",
+  "description": "Standard recovery, day 3 after total knee replacement. Moderate pain expected, mobility improving."
 }

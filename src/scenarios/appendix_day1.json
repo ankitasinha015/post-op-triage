@@ -1,7 +1,7 @@
 {
-    "name": "Day 1 — Post Appendectomy",
-    "surgery_type": "Laparoscopic Appendectomy",
-    "recovery_day": 1,
-    "patient_name": "Jordan",
-    "description": "First day after appendectomy. Some incision pain and nausea expected."
+  "name": "Day 1 - Post Appendectomy",
+  "surgery_type": "Laparoscopic Appendectomy",
+  "recovery_day": 1,
+  "patient_name": "Jordan",
+  "description": "First day after appendectomy. Some incision pain and nausea expected."
 }

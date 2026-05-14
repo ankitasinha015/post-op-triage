@@ -1,7 +1,7 @@
 {
-    "name": "Day 7 — Knee Replacement (Possible Infection)",
-    "surgery_type": "Total Knee Replacement",
-    "recovery_day": 7,
-    "patient_name": "Maria",
-    "description": "Day 7 post-knee replacement. Pain was improving but has reversed. Low-grade fever on ibuprofen. Tests the medication masking and inter-agent feedback loop."
+  "name": "Day 7 - Knee Replacement (Possible Infection)",
+  "surgery_type": "Total Knee Replacement",
+  "recovery_day": 7,
+  "patient_name": "Maria",
+  "description": "Day 7 post-knee replacement. Pain was improving but has reversed. Low-grade fever on ibuprofen. Tests the medication masking and inter-agent feedback loop."
 }

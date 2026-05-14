@@ -121,6 +121,8 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
     Handles the tool-use loop: Claude may call tools, we execute them
     and feed results back until Claude produces a final text response.
     """
+    MAX_ITERATIONS = 6
+
     session = db.get_session(session_id)
     if not session:
         return "Error: session not found."
@@ -133,9 +135,14 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
     patient_context = db.build_patient_context(session_id)
     system_prompt = build_system_prompt(session, patient_context)
 
-    while True:
+    # Collect text across all loop iterations — Claude sometimes sends
+    # text alongside tool calls (e.g. "Let me log that..." + tool_use).
+    # We want the LAST substantive text the model produces.
+    collected_text = []
+
+    for iteration in range(MAX_ITERATIONS):
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250929",
             max_tokens=1024,
             system=system_prompt,
             tools=TOOL_DEFINITIONS,
@@ -145,22 +152,17 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
         tool_calls = [b for b in response.content if b.type == "tool_use"]
         text_blocks = [b for b in response.content if b.type == "text"]
 
+        # Capture any text from this iteration
+        for tb in text_blocks:
+            if tb.text.strip():
+                collected_text.append(tb.text.strip())
+
+        # No more tool calls → we're done
         if not tool_calls:
-            reply = text_blocks[0].text if text_blocks else "I'm here to help. How are you feeling?"
+            break
 
-            violation = check_output_content(reply)
-            if violation:
-                reply = sanitize_reply(reply, violation)
-                db.write_alert(
-                    session_id, "system-error",
-                    f"Guardrail blocked {violation.violation_type} language in agent reply",
-                    signals=["guardrail_output_filter", violation.violation_type],
-                    recommended_action="Agent attempted to diagnose/prescribe. Reply was sanitized.",
-                )
-
-            db.save_message(session_id, "assistant", reply)
-            return reply
-
+        # If stop_reason is "end_turn" but there are tool calls,
+        # the model is done thinking — execute tools and continue
         messages.append({"role": "assistant", "content": response.content})
 
         tool_results = []
@@ -183,3 +185,23 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
             })
 
         messages.append({"role": "user", "content": tool_results})
+
+    # Use the last collected text as the reply (it's the final patient-facing message).
+    # Fall back to earlier text if the last iteration had none.
+    if collected_text:
+        reply = collected_text[-1]
+    else:
+        reply = "I appreciate you sharing that. Can you tell me a bit more about what you're experiencing?"
+
+    violation = check_output_content(reply)
+    if violation:
+        reply = sanitize_reply(reply, violation)
+        db.write_alert(
+            session_id, "system-error",
+            f"Guardrail blocked {violation.violation_type} language in agent reply",
+            signals=["guardrail_output_filter", violation.violation_type],
+            recommended_action="Agent attempted to diagnose/prescribe. Reply was sanitized.",
+        )
+
+    db.save_message(session_id, "assistant", reply)
+    return reply

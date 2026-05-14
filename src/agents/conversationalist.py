@@ -11,6 +11,7 @@ from src import db
 from src.tools import TOOL_DEFINITIONS, execute_tool
 from src.clinical_knowledge import get_surgery_knowledge, get_medication_context, get_vital_reasoning
 from src.synthetic_scenarios import get_conversationalist_examples
+from src.guardrails import check_output_content, sanitize_reply, validate_tool_input
 
 SYSTEM_PROMPT = """You are a clinically-trained post-operative recovery assistant. You think like \
 a nurse — forming hypotheses about what might be happening, investigating through targeted questions, \
@@ -121,6 +122,17 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
 
         if not tool_calls:
             reply = text_blocks[0].text if text_blocks else "I'm here to help. How are you feeling?"
+
+            violation = check_output_content(reply)
+            if violation:
+                reply = sanitize_reply(reply, violation)
+                db.write_alert(
+                    session_id, "system-error",
+                    f"Guardrail blocked {violation.violation_type} language in agent reply",
+                    signals=["guardrail_output_filter", violation.violation_type],
+                    recommended_action="Agent attempted to diagnose/prescribe. Reply was sanitized.",
+                )
+
             db.save_message(session_id, "assistant", reply)
             return reply
 
@@ -128,7 +140,17 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
 
         tool_results = []
         for tc in tool_calls:
-            result = execute_tool(session_id, tc.name, tc.input)
+            validation = validate_tool_input(tc.name, tc.input)
+            if not validation["valid"]:
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tc.id,
+                    "content": f"Tool input rejected: {'; '.join(validation['errors'])}",
+                    "is_error": True,
+                })
+                continue
+
+            result = execute_tool(session_id, tc.name, validation["sanitized"])
             tool_results.append({
                 "type": "tool_result",
                 "tool_use_id": tc.id,

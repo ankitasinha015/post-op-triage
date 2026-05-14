@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from src import db
 from src.agents.conversationalist import run_turn
 from src.agents.risk_assessor import assess_risk
+from src.guardrails import check_emergency_bypass, run_guardrails_on_risk_assessment
 
 load_dotenv()
 
@@ -99,6 +100,17 @@ with left_col:
             with st.chat_message("user"):
                 st.write(user_input)
 
+            # GUARDRAIL Layer 1: Emergency keyword bypass (runs BEFORE agents)
+            emergency = check_emergency_bypass(user_input)
+            if emergency:
+                db.write_alert(
+                    st.session_state.session_id,
+                    emergency["severity"],
+                    emergency["summary"],
+                    signals=emergency["signals"],
+                    recommended_action=emergency["recommended_action"],
+                )
+
             with st.chat_message("assistant"):
                 with st.spinner("Listening..."):
                     try:
@@ -118,7 +130,17 @@ with left_col:
             def _run_background_assessment(sid: str):
                 try:
                     bg_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-                    assess_risk(bg_client, sid)
+                    assessment = assess_risk(bg_client, sid)
+                    if assessment:
+                        # GUARDRAIL Layers 3 & 4: Hallucination + score sanity
+                        checked = run_guardrails_on_risk_assessment(sid, assessment)
+                        if checked.get("guardrail_adjustments", {}).get("score_adjusted"):
+                            db.write_risk_score(
+                                sid,
+                                score=checked["score"],
+                                triggered_signals=checked["triggered_signals"],
+                                reasoning=checked["reasoning"],
+                            )
                 except Exception as e:
                     db.write_alert(
                         sid, "system-error",

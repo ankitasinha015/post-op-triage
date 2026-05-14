@@ -191,3 +191,132 @@ def get_session_state(session_id: str) -> dict:
         "alerts": get_alerts(session_id),
         "risk_scores": get_risk_scores(session_id),
     }
+
+
+def save_patient_history(session_id: str, patient_name: str, surgery_type: str,
+                         recovery_day: int, key_findings: list[str],
+                         risk_level: str, unresolved_concerns: list[str],
+                         resolved_concerns: list[str], session_summary: str) -> int:
+    conn = _get_conn()
+    cur = conn.execute(
+        """INSERT INTO patient_history
+           (patient_name, session_id, surgery_type, recovery_day, key_findings,
+            risk_level, unresolved_concerns, resolved_concerns, session_summary)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (patient_name, session_id, surgery_type, recovery_day,
+         json.dumps(key_findings), risk_level,
+         json.dumps(unresolved_concerns), json.dumps(resolved_concerns),
+         session_summary),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_patient_history(patient_name: str, exclude_session_id: str = "") -> list[dict]:
+    conn = _get_conn()
+    rows = conn.execute(
+        """SELECT session_id, surgery_type, recovery_day, key_findings, risk_level,
+                  unresolved_concerns, resolved_concerns, session_summary, recorded_at
+           FROM patient_history WHERE patient_name = ? AND session_id != ?
+           ORDER BY recorded_at DESC LIMIT 10""",
+        (patient_name, exclude_session_id),
+    ).fetchall()
+    results = []
+    for r in rows:
+        d = dict(r)
+        d["key_findings"] = json.loads(d["key_findings"])
+        d["unresolved_concerns"] = json.loads(d["unresolved_concerns"])
+        d["resolved_concerns"] = json.loads(d["resolved_concerns"])
+        results.append(d)
+    return results
+
+
+def build_patient_context(session_id: str) -> str:
+    """Build a structured clinical context string for agent prompts.
+    Includes: current session data, symptom trends, vital trends,
+    medication timeline, prior alerts, and cross-session history."""
+    session = get_session(session_id)
+    if not session:
+        return ""
+
+    lines = []
+    lines.append("=== CURRENT SESSION ===")
+    lines.append(f"Patient: {session['patient_name']}")
+    lines.append(f"Surgery: {session['surgery_type']}, Recovery Day {session['recovery_day']}")
+    lines.append(f"Session started: {session['started_at']}")
+
+    # Symptom timeline with trend detection
+    symptoms = get_symptoms(session_id)
+    if symptoms:
+        lines.append("\n--- SYMPTOMS (chronological) ---")
+        symptom_by_name: dict[str, list] = {}
+        for s in symptoms:
+            lines.append(f"  [{s['logged_at']}] {s['name']}: {s['severity']}/10"
+                         + (f" -- \"{s['free_text']}\"" if s.get('free_text') else ""))
+            symptom_by_name.setdefault(s["name"], []).append(s["severity"])
+
+        trends = []
+        for name, scores in symptom_by_name.items():
+            if len(scores) >= 2:
+                delta = scores[-1] - scores[0]
+                if delta > 0:
+                    trends.append(f"  [UP] {name}: WORSENING ({scores[0]} -> {scores[-1]})")
+                elif delta < 0:
+                    trends.append(f"  [DOWN] {name}: IMPROVING ({scores[0]} -> {scores[-1]})")
+                else:
+                    trends.append(f"  [STABLE] {name}: STABLE at {scores[-1]}")
+        if trends:
+            lines.append("\n--- SYMPTOM TRENDS ---")
+            lines.extend(trends)
+    else:
+        lines.append("\n--- SYMPTOMS: None reported yet ---")
+
+    # Vital signs
+    vitals = get_vitals(session_id)
+    if vitals:
+        lines.append("\n--- VITALS ---")
+        for v in vitals:
+            lines.append(f"  [{v['logged_at']}] {v['type']}: {v['value']} {v['unit']}")
+    else:
+        lines.append("\n--- VITALS: None recorded yet ---")
+
+    # Medications
+    meds = get_meds(session_id)
+    if meds:
+        lines.append("\n--- MEDICATIONS ---")
+        for m in meds:
+            lines.append(f"  [{m['logged_at']}] {m['med_name']} {m['dose']} (taken: {m['taken_at']})")
+    else:
+        lines.append("\n--- MEDICATIONS: None recorded yet ---")
+
+    # Prior alerts this session
+    alerts = get_alerts(session_id)
+    if alerts:
+        lines.append("\n--- PRIOR ALERTS (this session) ---")
+        for a in alerts:
+            lines.append(f"  [{a['created_at']}] {a['severity'].upper()}: {a['summary']}")
+
+    # Risk score history
+    risk_scores = get_risk_scores(session_id)
+    if risk_scores:
+        lines.append("\n--- RISK SCORE HISTORY ---")
+        for r in risk_scores:
+            signals = ", ".join(r["triggered_signals"]) if r.get("triggered_signals") else "none"
+            lines.append(f"  [{r['assessed_at']}] Score: {r['score']}/100 | Signals: {signals}")
+
+    # Cross-session history
+    history = get_patient_history(session["patient_name"], exclude_session_id=session_id)
+    if history:
+        lines.append("\n=== PRIOR SESSIONS (most recent first) ===")
+        for h in history:
+            lines.append(f"\n  Session: {h['surgery_type']}, Day {h['recovery_day']} ({h['recorded_at']})")
+            lines.append(f"  Risk level: {h['risk_level']}")
+            lines.append(f"  Summary: {h['session_summary']}")
+            if h["key_findings"]:
+                lines.append(f"  Key findings: {', '.join(h['key_findings'])}")
+            if h["unresolved_concerns"]:
+                lines.append(f"  [!] Unresolved: {', '.join(h['unresolved_concerns'])}")
+            if h["resolved_concerns"]:
+                lines.append(f"  [OK] Resolved: {', '.join(h['resolved_concerns'])}")
+
+    return "\n".join(lines)

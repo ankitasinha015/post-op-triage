@@ -5,6 +5,7 @@ Streamlit entry point: two-column layout with patient chat (left) and nurse dash
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from dotenv import load_dotenv
 
 from src import db
 from src.agents.conversationalist import run_turn
+from src.agents.risk_assessor import assess_risk
 
 load_dotenv()
 
@@ -113,6 +115,24 @@ with left_col:
                         )
                 st.write(reply)
 
+            def _run_background_assessment(sid: str):
+                try:
+                    bg_client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+                    assess_risk(bg_client, sid)
+                except Exception as e:
+                    db.write_alert(
+                        sid, "system-error",
+                        f"Risk Assessor failed: {e}",
+                        signals=["agent_failure"],
+                        recommended_action="Risk assessment unavailable. Manual review recommended.",
+                    )
+
+            threading.Thread(
+                target=_run_background_assessment,
+                args=(st.session_state.session_id,),
+                daemon=True,
+            ).start()
+
             st.session_state.chat_messages.append({"role": "assistant", "content": reply})
     else:
         st.info("Select a scenario and click **Start New Session** to begin.")
@@ -162,11 +182,21 @@ def nurse_dashboard():
             unsafe_allow_html=True,
         )
 
-    # Risk score sparkline
+    # Risk score sparkline + latest reasoning
     if risk_scores:
         st.caption("**Risk Score Trend**")
         scores = [r["score"] for r in risk_scores[-10:]]
         st.line_chart(scores, height=100)
+        latest_risk = risk_scores[-1]
+        if latest_risk.get("reasoning"):
+            st.caption(f"**Latest Assessment:** {latest_risk['reasoning']}")
+        if latest_risk.get("triggered_signals"):
+            signals = latest_risk["triggered_signals"]
+            if isinstance(signals, str):
+                import json as _json
+                signals = _json.loads(signals)
+            if signals:
+                st.caption(f"**Triggered Signals:** {', '.join(signals)}")
 
     # Recovery timeline
     st.caption("**Recovery Timeline**")

@@ -60,3 +60,17 @@ CREATE TABLE IF NOT EXISTS risk_scores (
     reasoning TEXT,
     assessed_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS patient_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    patient_name TEXT NOT NULL,
+    session_id TEXT NOT NULL REFERENCES session(id),
+    surgery_type TEXT NOT NULL,
+    recovery_day INTEGER NOT NULL,
+    key_findings TEXT NOT NULL,
+    risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'moderate', 'high', 'critical')),
+    unresolved_concerns TEXT,
+    resolved_concerns TEXT,
+    session_summary TEXT NOT NULL,
+    recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

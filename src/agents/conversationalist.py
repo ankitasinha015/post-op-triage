@@ -71,6 +71,24 @@ SAFETY:
 - This is an educational demo, not medical advice."""
 
 
+def _build_investigation_gaps_section(session_id: str) -> str:
+    """Build the RISK ASSESSOR REQUESTS section from unaddressed investigation gaps."""
+    gaps = db.get_investigation_gaps(session_id, only_unaddressed=True)
+    if not gaps:
+        return ""
+
+    lines = [
+        "\nRISK ASSESSOR REQUESTS — The clinical risk assessor has flagged these "
+        "questions based on its analysis. Work them NATURALLY into conversation "
+        "(don't say 'the risk assessor asked me to check'). Prioritize high-priority items:\n"
+    ]
+    for g in gaps:
+        priority_marker = {"high": "[!]", "medium": "[-]", "low": "[.]"}.get(g["priority"], "[-]")
+        lines.append(f"  {priority_marker} {g['question']}")
+
+    return "\n".join(lines)
+
+
 def build_system_prompt(session: dict, patient_context: str) -> str:
     surgery_knowledge = get_surgery_knowledge(session["surgery_type"])
 
@@ -80,7 +98,9 @@ def build_system_prompt(session: dict, patient_context: str) -> str:
 
     reasoning_examples = get_conversationalist_examples()
 
-    return SYSTEM_PROMPT.format(
+    investigation_gaps = _build_investigation_gaps_section(session["id"]) if "id" in session else ""
+
+    prompt = SYSTEM_PROMPT.format(
         surgery_type=session["surgery_type"],
         recovery_day=session["recovery_day"],
         patient_name=session["patient_name"],
@@ -88,6 +108,11 @@ def build_system_prompt(session: dict, patient_context: str) -> str:
         clinical_knowledge=surgery_knowledge + ("\n\n" + med_context if med_context else ""),
         reasoning_examples=reasoning_examples,
     )
+
+    if investigation_gaps:
+        prompt += "\n\n" + investigation_gaps
+
+    return prompt
 
 
 def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) -> str:

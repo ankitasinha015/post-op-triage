@@ -181,6 +181,46 @@ RISK_ASSESSOR_REASONING_EXAMPLES = [
 ]
 
 
+RISK_ASSESSOR_INVESTIGATION_EXAMPLES = [
+    {
+        "scenario": "Medication masking detection",
+        "investigation_sequence": [
+            "1. get_symptom_trend('pain') -> WORSENING (3 -> 5)",
+            "2. get_vital_trend('temperature') -> 100.2F (single reading)",
+            "3. check_med_context('fever') -> WARNING: ibuprofen suppresses fever, true temp may be higher",
+            "4. get_time_since_last('bowel') -> never reported (patient on opioids)",
+            "5. flag_investigation_gap('Ask about wound appearance — any new redness, warmth, or drainage since yesterday?', 'high')",
+            "6. write_risk_alert(score=55, signals=['pain_worsening','fever_persistent','med_masking'], reasoning='...')",
+        ],
+        "reasoning": (
+            "The agent doesn't just see 100.2F and call it low-grade. It INVESTIGATES by checking "
+            "what meds the patient is on, discovers ibuprofen is suppressing the true reading, and "
+            "combines this with worsening pain to flag a possible masked infection. It also notices "
+            "the patient hasn't mentioned bowel function despite being on opioids. The investigation "
+            "gap asks the Conversationalist to check wound appearance — data the agent can't get "
+            "from the chart alone."
+        ),
+    },
+    {
+        "scenario": "DVT risk with missing mobility data",
+        "investigation_sequence": [
+            "1. get_symptom_trend('swelling') -> present, severity 5",
+            "2. get_symptom_trend('calf_pain') -> NEW, severity 4",
+            "3. get_vital_trend('heart_rate') -> 105 bpm (elevated)",
+            "4. get_time_since_last('mobility') -> never reported",
+            "5. flag_investigation_gap('Ask if patient has been doing their walking exercises and PT — immobility is a DVT risk factor', 'high')",
+            "6. write_risk_alert(score=75, signals=['dvt_leg_swelling','dvt_calf_pain','tachycardia'], reasoning='...')",
+        ],
+        "reasoning": (
+            "The agent actively checks for what's MISSING. No mobility reports for a post-joint "
+            "patient is itself a risk factor — the absence of data is data. Combined with the DVT "
+            "triad (swelling + calf pain + tachycardia), this triggers a high-priority flag to ask "
+            "about ambulation."
+        ),
+    },
+]
+
+
 def get_conversationalist_examples() -> str:
     """Format reasoning examples for the Conversationalist prompt."""
     lines = ["CLINICAL REASONING EXAMPLES — study how these demonstrate hypothesis-driven thinking:\n"]
@@ -203,4 +243,14 @@ def get_risk_assessor_examples() -> str:
         lines.append(f"  WRONG assessment (score {ex['bad_assessment']['score']}): {ex['bad_assessment']['reasoning']}")
         lines.append(f"  RIGHT assessment (score {ex['good_assessment']['score']}): {ex['good_assessment']['reasoning']}")
         lines.append("")
+
+    lines.append("\nINVESTIGATION EXAMPLES — study how tools are used to build a clinical picture:\n")
+    for i, ex in enumerate(RISK_ASSESSOR_INVESTIGATION_EXAMPLES, 1):
+        lines.append(f"Investigation {i}: {ex['scenario']}")
+        lines.append("  Tool sequence:")
+        for step in ex["investigation_sequence"]:
+            lines.append(f"    {step}")
+        lines.append(f"  WHY this investigation matters: {ex['reasoning']}")
+        lines.append("")
+
     return "\n".join(lines)

@@ -74,3 +74,13 @@ CREATE TABLE IF NOT EXISTS patient_history (
     session_summary TEXT NOT NULL,
     recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS investigation_gaps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES session(id),
+    question TEXT NOT NULL,
+    priority TEXT CHECK(priority IN ('high','medium','low')) DEFAULT 'medium',
+    source TEXT DEFAULT 'risk_assessor',
+    addressed INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

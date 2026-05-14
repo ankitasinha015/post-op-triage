@@ -212,6 +212,57 @@ def get_medication_context(med_names: list[str]) -> str:
     return "\n".join(lines)
 
 
+def check_med_masking(symptom_name: str, med_names: list[str]) -> str:
+    """Analyze whether current medications could be masking a symptom.
+    Returns a clinical reasoning string for the Risk Assessor."""
+    symptom_lower = symptom_name.lower()
+    lines = [f"Medication masking analysis for '{symptom_name}':"]
+    found_masking = False
+
+    for med in med_names:
+        med_key = med.lower().strip()
+        info = MEDICATION_KNOWLEDGE.get(med_key)
+        if not info:
+            continue
+
+        med_class = info["class"]
+
+        # NSAIDs mask fever and inflammation
+        if "NSAID" in med_class:
+            if symptom_lower in ("fever", "temperature", "wound_warmth", "swelling", "inflammation"):
+                lines.append(
+                    f"  WARNING: {med} ({med_class}) actively suppresses fever and inflammation. "
+                    f"A '{symptom_name}' reading while on {med} may understate true severity. "
+                    f"Onset: {info['onset']}, Duration: {info['duration']}."
+                )
+                found_masking = True
+
+        # Opioids mask pain and cause confounding symptoms
+        if "Opioid" in med_class:
+            if symptom_lower in ("pain", "confusion", "drowsiness", "fatigue", "nausea", "constipation"):
+                lines.append(
+                    f"  WARNING: {med} ({med_class}) can mask pain severity and cause "
+                    f"drowsiness/confusion that mimics neurological changes. "
+                    f"Also causes constipation — absence of bowel reports may be opioid-induced."
+                )
+                found_masking = True
+
+        # Acetaminophen masks fever but not inflammation
+        if "Antipyretic" in med_class:
+            if symptom_lower in ("fever", "temperature"):
+                lines.append(
+                    f"  WARNING: {med} ({med_class}) suppresses fever but NOT inflammation. "
+                    f"A temperature reading while on {med} may be artificially low. "
+                    f"If wound warmth/swelling persists despite normal temp, suspect masked infection."
+                )
+                found_masking = True
+
+    if not found_masking:
+        lines.append(f"  No significant masking interactions found between current meds and '{symptom_name}'.")
+
+    return "\n".join(lines)
+
+
 def get_vital_reasoning() -> str:
     """Get vital sign interpretation guidance."""
     lines = ["VITAL SIGN INTERPRETATION GUIDE:\n"]

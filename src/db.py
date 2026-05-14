@@ -231,6 +231,36 @@ def get_patient_history(patient_name: str, exclude_session_id: str = "") -> list
     return results
 
 
+def write_investigation_gap(session_id: str, question: str,
+                            priority: str = "medium", source: str = "risk_assessor") -> int:
+    """Write a gap the Risk Assessor wants the Conversationalist to probe."""
+    conn = _get_conn()
+    cur = conn.execute(
+        "INSERT INTO investigation_gaps (session_id, question, priority, source) VALUES (?, ?, ?, ?)",
+        (session_id, question, priority, source),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def get_investigation_gaps(session_id: str, only_unaddressed: bool = True) -> list[dict]:
+    """Get investigation gaps for this session."""
+    conn = _get_conn()
+    query = "SELECT id, question, priority, source, addressed, created_at FROM investigation_gaps WHERE session_id = ?"
+    if only_unaddressed:
+        query += " AND addressed = 0"
+    query += " ORDER BY CASE priority WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 END, id"
+    rows = conn.execute(query, (session_id,)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def mark_gap_addressed(gap_id: int) -> None:
+    """Mark an investigation gap as addressed."""
+    conn = _get_conn()
+    conn.execute("UPDATE investigation_gaps SET addressed = 1 WHERE id = ?", (gap_id,))
+    conn.commit()
+
+
 def build_patient_context(session_id: str) -> str:
     """Build a structured clinical context string for agent prompts.
     Includes: current session data, symptom trends, vital trends,

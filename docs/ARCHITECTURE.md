@@ -120,13 +120,15 @@ Agents don't talk to each other directly. They coordinate through SQLite as shar
 Conversationalist ──writes──> symptoms, vitals, meds, messages
                                       |
                                       v (reads all of it)
-Risk Assessor     ──writes──> risk_scores
+Risk Assessor     ──writes──> risk_scores, investigation_gaps
                                       |
-                                      v (reads score + signals)
-Escalator         ──writes──> alerts    [Evening 3 — planned]
+                                      v (reads score + signals + gaps)
+Escalator         ──writes──> alerts
                                       |
                                       v (reads alerts)
 Nurse Dashboard   <──displays─────────┘
+
+Conversationalist ◄──reads── investigation_gaps (async feedback loop)
 ```
 
 ---
@@ -154,34 +156,47 @@ Nurse Dashboard   <──displays─────────┘
 - Full patient context with symptom trend detection
 - Cross-session history (prior key findings, unresolved/resolved concerns)
 
-### 2. Risk Assessor (Complete)
+### 2. Risk Assessor (Complete — Upgraded to Agentic Investigator)
 - **Model:** Claude Sonnet
-- **Role:** Background clinical analyst. Thinks like a nurse with 20 years of experience reviewing a chart.
-- **Pattern:** Single API call (no tool loop). Returns structured JSON: `{score, triggered_signals, reasoning}`.
+- **Role:** Background clinical investigator. Actively examines patient data through tool calls.
+- **Pattern:** Tool-use loop with 6 investigation tools, capped at 6 iterations. Falls back to single-shot if loop fails.
 - **Runs:** In a background thread after the Conversationalist replies. Patient never waits.
-- **Prompt caching:** `cache_control: {"type": "ephemeral"}` on the system prompt (red-flag matrix is static reference data).
+- **Prompt caching:** `cache_control: {"type": "ephemeral"}` on the system prompt.
+- **Tools:** `get_symptom_trend`, `get_vital_trend`, `check_med_context`, `get_time_since_last`, `flag_investigation_gap`, `write_risk_alert`
 
-**How it thinks:**
-1. **Reads trajectories** — "Pain reversed from improving (3/10) to worsening (6/10)"
-2. **Detects compounding patterns** — "Swelling + calf pain + tachycardia = DVT triad, not three mild findings"
-3. **Accounts for medication masking** — "Patient on ibuprofen with temp 100.2F — true temperature may be higher"
-4. **Notices what's MISSING** — "Day 5 post-knee, no mention of mobility = DVT risk factor"
-5. **Calibrates to surgery and day** — "Day 1 appendectomy nausea is a 15, not a 50"
-6. **Won't cry wolf** — over-scoring normal recovery erodes trust in the alert system
+**How it investigates:**
+1. **Checks trends** — Uses `get_symptom_trend` and `get_vital_trend` to detect worsening, improvement, or reversal
+2. **Detects medication masking** — Uses `check_med_context` to see if NSAIDs/opioids are hiding true severity
+3. **Notices what's missing** — Uses `get_time_since_last` to find gaps (no mobility report = DVT risk)
+4. **Flags gaps for Conversationalist** — Uses `flag_investigation_gap` to request specific questions on the next turn
+5. **Writes final assessment** — Uses `write_risk_alert` with score, signals, and clinical reasoning
+
+**Inter-agent feedback loop:**
+- Risk Assessor writes to `investigation_gaps` table
+- Conversationalist reads unaddressed gaps on next turn, works them naturally into conversation
+- Gaps are marked as addressed (audit trail preserved)
+
+**Error handling:**
+- Aborts after 3+ tool failures, falls back to single-shot assessment
+- Max 6 iterations prevents runaway loops
+- Nurse dashboard always gets a score (fallback guarantees this)
 
 **Knowledge injected each assessment:**
 - Full patient context with trend detection
 - Surgery-specific clinical knowledge
 - Vital sign interpretation guide with clinical reasoning
 - Red-flag matrix (21 signals, surgery-specific filtering)
-- 3 few-shot reasoning examples showing shallow vs deep clinical reasoning
+- 5 few-shot examples: 3 reasoning patterns + 2 investigation sequences
 
-### 3. Escalator (Evening 3 — Planned)
+### 3. Escalator (Complete)
 - **Model:** Claude Haiku (`claude-haiku-4-5-20251001`)
 - **Role:** Translates risk assessment into actionable nurse alerts
-- **Input:** Risk score + triggered signals + session context
-- **Output:** Alert severity (`routine` | `monitor` | `urgent` | `911-now`) + summary + recommended action
-- **Design rationale:** Haiku is fast and cheap — appropriate for a narrow classification task
+- **Input:** Risk score + triggered signals + reasoning + investigation gaps
+- **Output:** JSON: `{severity, headline, actions[], reassess_in, rationale}`
+- **Runs:** In background thread after Risk Assessor completes
+- **Optimization:** Skips Haiku API call for very low-risk scores (≤15) — generates alert locally
+- **Safety:** Validates that Haiku doesn't under-escalate — enforces minimum severity based on score
+- **Design rationale:** Haiku is fast (~$0.001/call) and cheap — appropriate for a focused translation task
 
 ---
 
@@ -304,7 +319,7 @@ On the next session for the same patient, this history is injected into the cont
 
 All agents share state through a single SQLite database (`triage.db`). WAL (Write-Ahead Logging) mode enables concurrent reads while one writer commits. Thread-local connections (`threading.local()`) ensure Python thread safety.
 
-### Schema (8 tables)
+### Schema (9 tables)
 
 | Table | Purpose | Key Columns |
 |-------|---------|-------------|
@@ -316,6 +331,7 @@ All agents share state through a single SQLite database (`triage.db`). WAL (Writ
 | `alerts` | Escalator output for nurse | `severity`, `summary`, `recommended_action` |
 | `risk_scores` | Risk Assessor output | `score` (0-100), `triggered_signals`, `reasoning` |
 | `patient_history` | Cross-session memory | `key_findings`, `risk_level`, `unresolved_concerns` |
+| `investigation_gaps` | Risk Assessor → Conversationalist feedback | `question`, `priority`, `addressed` |
 
 ### Constraints
 - `severity` on symptoms: CHECK 0-10
@@ -413,7 +429,7 @@ post-op-triage/
       __init__.py
       conversationalist.py        # Patient-facing reasoning agent (Sonnet, tool-use loop)
       risk_assessor.py            # Background pattern recognition agent (Sonnet)
-      escalator.py                # [Evening 3] Alert severity + nurse text (Haiku)
+      escalator.py                # Alert severity + nurse text (Haiku)
     scenarios/
       knee_day3.json              # Day 3 post knee replacement (Alex)
       appendix_day1.json          # Day 1 post appendectomy (Jordan)
@@ -431,9 +447,9 @@ post-op-triage/
 |---------|-------|--------|
 | 1 | Scaffold + Conversationalist agent + Streamlit UI | Done |
 | 2 | Risk Assessor + clinical knowledge + memory + reasoning agents + guardrails | Done |
-| 3 | Escalator agent (Haiku) + alert UI integration | Planned |
-| 4 | Expand toolset + add more scenarios | Planned |
-| 5 | Prompt caching (1-hour TTL) + pytest fixtures | Planned |
+| 3 | Risk Assessor upgrade to agentic investigator (6 tools, feedback loop) | Done |
+| 4 | Escalator agent (Haiku) + 4 new scenarios (7 total) | Done |
+| 5 | Tests + deployment | Planned |
 | 6 | README + demo recording | Planned |
 | 7 | Buffer / voice input exploration | Planned |
 

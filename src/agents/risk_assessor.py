@@ -305,24 +305,7 @@ def _execute_risk_tool(session_id: str, tool_name: str, tool_input: dict) -> str
                 reasoning=reasoning,
             )
 
-            severity = "routine"
-            if score >= 81:
-                severity = "911-now"
-            elif score >= 61:
-                severity = "urgent"
-            elif score >= 41:
-                severity = "monitor"
-
-            if score >= 41:
-                db.write_alert(
-                    session_id=session_id,
-                    severity=severity,
-                    summary=reasoning[:200],
-                    signals=triggered,
-                    recommended_action=f"Risk score {score}/100 — {severity} level review recommended.",
-                )
-
-            return f"Risk assessment recorded: score={score}/100, severity={severity}, signals={triggered}"
+            return f"Risk assessment recorded: score={score}/100, signals={triggered}. Escalator will generate nurse alert."
 
         else:
             return f"Unknown tool: {tool_name}"

@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from src import db
 from src.agents.conversationalist import run_turn
 from src.agents.risk_assessor import assess_risk
+from src.agents.escalator import escalate
 from src.guardrails import check_emergency_bypass, run_guardrails_on_risk_assessment
 
 load_dotenv()
@@ -141,6 +142,10 @@ with left_col:
                                 triggered_signals=checked["triggered_signals"],
                                 reasoning=checked["reasoning"],
                             )
+                            assessment = checked
+
+                        # Escalator: translate assessment into nurse-facing alert
+                        escalate(bg_client, sid, assessment)
                 except Exception as e:
                     db.write_alert(
                         sid, "system-error",

@@ -1,0 +1,7 @@
+{
+    "name": "Day 1 — Knee Replacement (Routine)",
+    "surgery_type": "Total Knee Replacement",
+    "recovery_day": 1,
+    "patient_name": "Diana",
+    "description": "Day 1 post-knee replacement. High pain expected. Tests that the system doesn't over-score normal early recovery findings."
+}

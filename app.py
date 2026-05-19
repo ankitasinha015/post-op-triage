@@ -284,6 +284,111 @@ st.markdown("""
         border-radius: 3px;
     }
 
+    /* Conclusion card */
+    .conclusion-card {
+        border-radius: 14px;
+        padding: 20px 24px;
+        margin: 12px 0;
+        background: rgba(255,255,255,0.03);
+    }
+    .conclusion-card.sev-routine  { border: 2px solid #10b981; }
+    .conclusion-card.sev-monitor  { border: 2px solid #f59e0b; }
+    .conclusion-card.sev-urgent   { border: 2px solid #f97316; }
+    .conclusion-card.sev-critical { border: 2px solid #ef4444; }
+    .conclusion-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+    .conclusion-header .sev-badge {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        padding: 4px 10px;
+        border-radius: 6px;
+    }
+    .sev-badge.routine  { background: rgba(16,185,129,0.15); color: #34d399; }
+    .sev-badge.monitor  { background: rgba(245,158,11,0.15); color: #fbbf24; }
+    .sev-badge.urgent   { background: rgba(249,115,22,0.15); color: #fb923c; }
+    .sev-badge.critical { background: rgba(239,68,68,0.15); color: #f87171; }
+    .conclusion-section {
+        margin: 10px 0;
+    }
+    .conclusion-section .label {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+        color: #64748b;
+        margin-bottom: 4px;
+    }
+    .conclusion-section .value {
+        font-size: 14px;
+        color: #e2e8f0;
+        line-height: 1.5;
+    }
+    .conclusion-symptoms {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 6px;
+    }
+    .conclusion-symptoms .symptom-chip {
+        display: inline-block;
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.1);
+        font-size: 11px;
+        padding: 3px 8px;
+        border-radius: 4px;
+        color: #94a3b8;
+    }
+
+    /* Turn counter */
+    .turn-counter {
+        text-align: center;
+        padding: 6px 0;
+        margin-bottom: 8px;
+    }
+    .turn-counter .dots {
+        display: inline-flex;
+        gap: 6px;
+        align-items: center;
+    }
+    .turn-counter .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: rgba(255,255,255,0.1);
+        border: 1px solid rgba(255,255,255,0.15);
+    }
+    .turn-counter .dot.filled {
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        border-color: transparent;
+    }
+    .turn-counter .dot.current {
+        background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+        border-color: transparent;
+        box-shadow: 0 0 8px rgba(59,130,246,0.4);
+    }
+    .turn-counter .turn-label {
+        font-size: 11px;
+        color: #64748b;
+        margin-left: 10px;
+    }
+
+    /* Chat locked state */
+    .chat-locked-msg {
+        text-align: center;
+        padding: 16px;
+        color: #64748b;
+        font-size: 13px;
+        border: 1px dashed rgba(255,255,255,0.1);
+        border-radius: 10px;
+        margin-top: 12px;
+    }
+
     /* Empty state */
     .empty-state {
         text-align: center;
@@ -324,6 +429,77 @@ def get_client() -> anthropic.Anthropic | None:
     return anthropic.Anthropic(api_key=api_key)
 
 
+def _try_parse_conclusion(reply: str) -> dict | None:
+    """Try to parse a conclusion JSON from the agent's reply."""
+    try:
+        data = json.loads(reply)
+        if isinstance(data, dict) and data.get("conclusion") is True:
+            return data
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return None
+
+
+def _render_conclusion_card(data: dict) -> str:
+    """Return HTML for an inline conclusion card."""
+    sev = data.get("severity", "routine")
+    icons = {"routine": "✅", "monitor": "👁️", "urgent": "⚠️", "critical": "🚨"}
+    icon = icons.get(sev, "🔔")
+
+    symptoms_html = ""
+    noted = data.get("symptoms_noted", [])
+    if noted:
+        chips = "".join(f'<span class="symptom-chip">{s}</span>' for s in noted)
+        symptoms_html = (
+            f'<div class="conclusion-section">'
+            f'<div class="label">Symptoms Noted</div>'
+            f'<div class="conclusion-symptoms">{chips}</div>'
+            f'</div>'
+        )
+
+    return (
+        f'<div class="conclusion-card sev-{sev}">'
+        f'<div class="conclusion-header">'
+        f'<span style="font-size:22px;">{icon}</span>'
+        f'<span class="sev-badge {sev}">{sev}</span>'
+        f'<span style="font-size:13px;color:#94a3b8;">Check-in Complete</span>'
+        f'</div>'
+        f'<div class="conclusion-section">'
+        f'<div class="label">Summary</div>'
+        f'<div class="value">{data.get("summary", "")}</div>'
+        f'</div>'
+        f'<div class="conclusion-section">'
+        f'<div class="label">Guidance</div>'
+        f'<div class="value">{data.get("guidance", "")}</div>'
+        f'</div>'
+        f'<div class="conclusion-section">'
+        f'<div class="label">Next Step</div>'
+        f'<div class="value">{data.get("next_step", "")}</div>'
+        f'</div>'
+        f'{symptoms_html}'
+        f'</div>'
+    )
+
+
+def _render_turn_counter(current_turn: int, max_turns: int = 4) -> str:
+    """Return HTML for a turn progress indicator."""
+    dots = ""
+    for i in range(1, max_turns + 1):
+        if i < current_turn:
+            dots += '<span class="dot filled"></span>'
+        elif i == current_turn:
+            dots += '<span class="dot current"></span>'
+        else:
+            dots += '<span class="dot"></span>'
+    label = f"Question {min(current_turn, max_turns)} of {max_turns}"
+    return (
+        f'<div class="turn-counter">'
+        f'<span class="dots">{dots}</span>'
+        f'<span class="turn-label">{label}</span>'
+        f'</div>'
+    )
+
+
 # ─── Init ───
 db.init_db()
 scenarios = load_scenarios()
@@ -332,6 +508,8 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = None
 if "chat_messages" not in st.session_state:
     st.session_state.chat_messages = []
+if "session_concluded" not in st.session_state:
+    st.session_state.session_concluded = False
 
 # ─── Check API key ───
 has_api_key = bool(os.getenv("ANTHROPIC_API_KEY"))
@@ -395,6 +573,7 @@ with st.sidebar:
         )
         st.session_state.session_id = session_id
         st.session_state.chat_messages = []
+        st.session_state.session_concluded = False
         st.rerun()
 
     st.markdown("---")
@@ -454,13 +633,42 @@ if page == "💬 Patient Chat":
                 unsafe_allow_html=True,
             )
 
-            # Chat history
+            # Count current patient turns for progress indicator
+            patient_turns = sum(1 for m in st.session_state.chat_messages if m["role"] == "user")
+
+            # Turn counter (show after first message)
+            if patient_turns > 0 and not st.session_state.session_concluded:
+                st.markdown(_render_turn_counter(patient_turns), unsafe_allow_html=True)
+
+            # Chat history — render conclusion cards for JSON conclusions
             for msg in st.session_state.chat_messages:
+                if msg["role"] == "assistant":
+                    conclusion = _try_parse_conclusion(msg["content"])
+                    if conclusion:
+                        st.markdown(_render_conclusion_card(conclusion), unsafe_allow_html=True)
+                        continue
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
 
-            # Chat input
-            if user_input := st.chat_input("How are you feeling today?"):
+            # Chat input (locked after conclusion)
+            if st.session_state.session_concluded:
+                st.markdown(
+                    '<div class="chat-locked-msg">'
+                    '✅ This check-in is complete. Review the summary above.'
+                    '</div>',
+                    unsafe_allow_html=True,
+                )
+                if st.button("🔄 Start New Check-in", type="primary", use_container_width=True):
+                    new_sid = db.create_session(
+                        surgery_type=session["surgery_type"],
+                        recovery_day=session["recovery_day"],
+                        patient_name=session["patient_name"],
+                    )
+                    st.session_state.session_id = new_sid
+                    st.session_state.chat_messages = []
+                    st.session_state.session_concluded = False
+                    st.rerun()
+            elif user_input := st.chat_input("How are you feeling today?"):
                 st.session_state.chat_messages.append({"role": "user", "content": user_input})
                 with st.chat_message("user"):
                     st.markdown(user_input)
@@ -477,21 +685,28 @@ if page == "💬 Patient Chat":
                     )
 
                 # Conversationalist agent
-                with st.chat_message("assistant"):
-                    with st.spinner("Thinking..."):
-                        try:
-                            client = get_client()
-                            reply = run_turn(client, st.session_state.session_id, user_input)
-                        except Exception as e:
-                            reply = "I'm having trouble responding right now. Please try again."
-                            db.write_alert(
-                                st.session_state.session_id,
-                                "system-error",
-                                f"Conversationalist failed: {e}",
-                                signals=["agent_failure"],
-                                recommended_action="Check API key and connection.",
-                            )
-                    st.markdown(reply)
+                with st.spinner("Thinking..."):
+                    try:
+                        client = get_client()
+                        reply = run_turn(client, st.session_state.session_id, user_input)
+                    except Exception as e:
+                        reply = "I'm having trouble responding right now. Please try again."
+                        db.write_alert(
+                            st.session_state.session_id,
+                            "system-error",
+                            f"Conversationalist failed: {e}",
+                            signals=["agent_failure"],
+                            recommended_action="Check API key and connection.",
+                        )
+
+                # Check if this is a conclusion
+                conclusion = _try_parse_conclusion(reply)
+                if conclusion:
+                    st.markdown(_render_conclusion_card(conclusion), unsafe_allow_html=True)
+                    st.session_state.session_concluded = True
+                else:
+                    with st.chat_message("assistant"):
+                        st.markdown(reply)
 
                 st.session_state.chat_messages.append({"role": "assistant", "content": reply})
 
@@ -524,6 +739,10 @@ if page == "💬 Patient Chat":
                     args=(st.session_state.session_id,),
                     daemon=True,
                 ).start()
+
+                # Force rerun to update turn counter and lock state
+                if conclusion:
+                    st.rerun()
     else:
         st.markdown("""
         <div class="empty-state">

@@ -494,78 +494,124 @@ def get_client() -> anthropic.Anthropic | None:
 
 
 def _try_parse_conclusion(reply: str) -> dict | None:
-    """Try to parse a conclusion JSON from the agent's reply."""
-    try:
-        data = json.loads(reply)
-        if isinstance(data, dict) and data.get("conclusion") is True:
-            return data
-    except (json.JSONDecodeError, TypeError):
-        pass
+    """Try to parse a conclusion JSON from the agent's reply.
+
+    Handles: raw JSON, markdown code fences, JSON embedded in text.
+    """
+    if not reply:
+        return None
+
+    # Try raw JSON first
+    text = reply.strip()
+    for attempt in [
+        text,                                          # raw
+        text.strip("`").strip(),                       # backtick-wrapped
+        _extract_json_block(text),                     # ```json ... ```
+        _extract_json_object(text),                    # JSON embedded in text
+    ]:
+        if not attempt:
+            continue
+        try:
+            data = json.loads(attempt)
+            if isinstance(data, dict) and data.get("conclusion") is True:
+                return data
+        except (json.JSONDecodeError, TypeError, ValueError):
+            continue
+    return None
+
+
+def _extract_json_block(text: str) -> str | None:
+    """Extract JSON from markdown code fences like ```json {...} ```."""
+    import re
+    match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
+    return match.group(1) if match else None
+
+
+def _extract_json_object(text: str) -> str | None:
+    """Extract a JSON object from text containing other content."""
+    start = text.find('{')
+    if start == -1:
+        return None
+    # Find matching closing brace
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
     return None
 
 
 def _render_conclusion_card(data: dict) -> str:
-    """Return HTML for an inline conclusion card with severity-specific CTAs."""
-    sev = data.get("severity", "routine")
-    icons = {"routine": "✅", "monitor": "👁️", "urgent": "⚠️", "critical": "🚨"}
-    icon = icons.get(sev, "🔔")
+    """Return a patient-friendly HTML conclusion card.
 
-    symptoms_html = ""
-    noted = data.get("symptoms_noted", [])
-    if noted:
-        chips = "".join(f'<span class="symptom-chip">{s}</span>' for s in noted)
-        symptoms_html = (
-            f'<div class="conclusion-section">'
-            f'<div class="label">Symptoms Noted</div>'
-            f'<div class="conclusion-symptoms">{chips}</div>'
-            f'</div>'
-        )
+    The patient sees: a warm heading, guidance, what to do next, and CTAs.
+    Clinical details (severity, symptom codes) go to the Nurse Dashboard only.
+    """
+    sev = data.get("severity", "routine")
+
+    # Patient-friendly headings per severity
+    heading_map = {
+        "routine": ("✅", "You're doing great!", "Your recovery looks on track."),
+        "monitor": ("👀", "Let's keep an eye on this", "A few things to watch, but nothing alarming right now."),
+        "urgent": ("📞", "Please reach out to your care team", "Some of what you described needs a closer look from your doctor."),
+        "critical": ("🚨", "Please seek care right away", "What you're describing needs immediate medical attention."),
+    }
+    icon, heading, subheading = heading_map.get(sev, heading_map["monitor"])
 
     # Severity-specific CTAs
     cta_map = {
         "routine": (
             '<span class="cta-btn cta-primary">📅 Schedule Follow-up Check-in</span>'
             '<span class="cta-btn cta-secondary">📖 View Recovery Tips</span>'
-            '<div class="conclusion-reassurance">Everything looks on track. Keep up the good work!</div>'
+            '<div class="conclusion-reassurance">Keep resting and following your care plan. You\'re on the right path!</div>'
         ),
         "monitor": (
-            '<span class="cta-btn cta-primary">⏰ Set Reminder (4 hours)</span>'
-            '<span class="cta-btn cta-secondary">🔄 Start New Check-in</span>'
-            '<div class="conclusion-reassurance">We\'ll keep an eye on this. Check back if anything changes.</div>'
+            '<span class="cta-btn cta-primary">⏰ Check Back in 4 Hours</span>'
+            '<span class="cta-btn cta-secondary">🔄 Start New Check-in Now</span>'
+            '<div class="conclusion-reassurance">We\'ve shared this with your care team. Check back soon so we can see how you\'re doing.</div>'
         ),
         "urgent": (
-            '<span class="cta-btn cta-urgent">📞 Call Care Team Now</span>'
+            '<span class="cta-btn cta-urgent">📞 Call Your Care Team Now</span>'
             '<span class="cta-btn cta-secondary">🔄 Start New Check-in</span>'
-            '<div class="conclusion-reassurance">Your care team is ready to help. Don\'t wait on this.</div>'
+            '<div class="conclusion-reassurance">Your care team is ready to help. Please don\'t wait on this.</div>'
         ),
         "critical": (
-            '<span class="cta-btn cta-critical">🚨 Call 911</span>'
-            '<span class="cta-btn cta-urgent">📞 Call Care Team</span>'
-            '<div class="conclusion-reassurance">Please seek immediate medical attention.</div>'
+            '<span class="cta-btn cta-critical">🚨 Call 911 Now</span>'
+            '<span class="cta-btn cta-urgent">📞 Call Your Care Team</span>'
+            '<div class="conclusion-reassurance">Your safety is the priority. Please get help immediately.</div>'
         ),
     }
     actions_html = cta_map.get(sev, cta_map["monitor"])
 
     return (
         f'<div class="conclusion-card sev-{sev}">'
+        # Warm heading (no clinical jargon)
         f'<div class="conclusion-header">'
-        f'<span style="font-size:22px;">{icon}</span>'
-        f'<span class="sev-badge {sev}">{sev}</span>'
-        f'<span style="font-size:13px;color:#94a3b8;">Check-in Complete</span>'
+        f'<span style="font-size:28px;">{icon}</span>'
+        f'<div>'
+        f'<div style="font-size:18px;font-weight:700;color:#f1f5f9;">{heading}</div>'
+        f'<div style="font-size:13px;color:#94a3b8;margin-top:2px;">{subheading}</div>'
         f'</div>'
+        f'</div>'
+        # What we found (patient-friendly summary)
         f'<div class="conclusion-section">'
-        f'<div class="label">Summary</div>'
+        f'<div class="label">What We Noticed</div>'
         f'<div class="value">{data.get("summary", "")}</div>'
         f'</div>'
+        # What to do (guidance)
         f'<div class="conclusion-section">'
-        f'<div class="label">Guidance</div>'
+        f'<div class="label">What You Can Do</div>'
         f'<div class="value">{data.get("guidance", "")}</div>'
         f'</div>'
+        # Next step
         f'<div class="conclusion-section">'
         f'<div class="label">Next Step</div>'
         f'<div class="value">{data.get("next_step", "")}</div>'
         f'</div>'
-        f'{symptoms_html}'
+        # CTAs
         f'<div class="conclusion-actions">{actions_html}</div>'
         f'</div>'
     )
@@ -730,12 +776,23 @@ if page == "💬 Patient Chat":
             if patient_turns > 0 and not st.session_state.session_concluded:
                 st.markdown(_render_turn_counter(patient_turns), unsafe_allow_html=True)
 
-            # Chat history — render conclusion cards for JSON conclusions
+            # Chat history — render conclusion cards, never show raw JSON
             for msg in st.session_state.chat_messages:
                 if msg["role"] == "assistant":
                     conclusion = _try_parse_conclusion(msg["content"])
                     if conclusion:
                         st.markdown(_render_conclusion_card(conclusion), unsafe_allow_html=True)
+                        continue
+                    # Safety net: hide any JSON that slipped through
+                    content = msg["content"]
+                    if content.strip().startswith("{") or '"conclusion"' in content:
+                        st.markdown(_render_conclusion_card({
+                            "conclusion": True, "severity": "monitor",
+                            "summary": "Thank you for this check-in. We've noted everything you shared.",
+                            "guidance": "Continue following your care team's instructions and rest.",
+                            "next_step": "Check back in a few hours, or contact your care team if anything changes.",
+                            "symptoms_noted": [],
+                        }), unsafe_allow_html=True)
                         continue
                 with st.chat_message(msg["role"]):
                     st.markdown(msg["content"])
@@ -793,6 +850,17 @@ if page == "💬 Patient Chat":
                 conclusion = _try_parse_conclusion(reply)
                 if conclusion:
                     st.markdown(_render_conclusion_card(conclusion), unsafe_allow_html=True)
+                    st.session_state.session_concluded = True
+                elif reply.strip().startswith("{") or '"conclusion"' in reply:
+                    # JSON-like but parsing failed -- never show raw JSON to patient
+                    st.markdown(_render_conclusion_card({
+                        "conclusion": True,
+                        "severity": "monitor",
+                        "summary": "Thank you for this check-in. We've noted everything you shared.",
+                        "guidance": "Continue following your care team's instructions and rest.",
+                        "next_step": "Check back in a few hours, or contact your care team if anything changes.",
+                        "symptoms_noted": [],
+                    }), unsafe_allow_html=True)
                     st.session_state.session_concluded = True
                 else:
                     with st.chat_message("assistant"):

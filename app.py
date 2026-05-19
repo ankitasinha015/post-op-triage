@@ -345,6 +345,70 @@ st.markdown("""
         color: #94a3b8;
     }
 
+    /* Conclusion CTAs */
+    .conclusion-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+        padding-top: 16px;
+        border-top: 1px solid rgba(255,255,255,0.08);
+    }
+    .conclusion-actions .cta-btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 10px 20px;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 600;
+        text-decoration: none;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        border: none;
+    }
+    .cta-btn.cta-primary {
+        background: linear-gradient(135deg, #3b82f6, #2563eb);
+        color: white;
+    }
+    .cta-btn.cta-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(59,130,246,0.3);
+    }
+    .cta-btn.cta-secondary {
+        background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.12);
+        color: #94a3b8;
+    }
+    .cta-btn.cta-secondary:hover {
+        background: rgba(255,255,255,0.1);
+        color: #e2e8f0;
+    }
+    .cta-btn.cta-urgent {
+        background: linear-gradient(135deg, #ea580c, #f97316);
+        color: white;
+    }
+    .cta-btn.cta-urgent:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(249,115,22,0.4);
+    }
+    .cta-btn.cta-critical {
+        background: linear-gradient(135deg, #dc2626, #ef4444);
+        color: white;
+        font-size: 14px;
+        padding: 12px 24px;
+    }
+    .cta-btn.cta-critical:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 16px rgba(239,68,68,0.4);
+    }
+    .conclusion-reassurance {
+        font-size: 12px;
+        color: #64748b;
+        margin-top: 10px;
+        text-align: center;
+    }
+
     /* Turn counter */
     .turn-counter {
         text-align: center;
@@ -441,7 +505,7 @@ def _try_parse_conclusion(reply: str) -> dict | None:
 
 
 def _render_conclusion_card(data: dict) -> str:
-    """Return HTML for an inline conclusion card."""
+    """Return HTML for an inline conclusion card with severity-specific CTAs."""
     sev = data.get("severity", "routine")
     icons = {"routine": "✅", "monitor": "👁️", "urgent": "⚠️", "critical": "🚨"}
     icon = icons.get(sev, "🔔")
@@ -456,6 +520,31 @@ def _render_conclusion_card(data: dict) -> str:
             f'<div class="conclusion-symptoms">{chips}</div>'
             f'</div>'
         )
+
+    # Severity-specific CTAs
+    cta_map = {
+        "routine": (
+            '<span class="cta-btn cta-primary">📅 Schedule Follow-up Check-in</span>'
+            '<span class="cta-btn cta-secondary">📖 View Recovery Tips</span>'
+            '<div class="conclusion-reassurance">Everything looks on track. Keep up the good work!</div>'
+        ),
+        "monitor": (
+            '<span class="cta-btn cta-primary">⏰ Set Reminder (4 hours)</span>'
+            '<span class="cta-btn cta-secondary">🔄 Start New Check-in</span>'
+            '<div class="conclusion-reassurance">We\'ll keep an eye on this. Check back if anything changes.</div>'
+        ),
+        "urgent": (
+            '<span class="cta-btn cta-urgent">📞 Call Care Team Now</span>'
+            '<span class="cta-btn cta-secondary">🔄 Start New Check-in</span>'
+            '<div class="conclusion-reassurance">Your care team is ready to help. Don\'t wait on this.</div>'
+        ),
+        "critical": (
+            '<span class="cta-btn cta-critical">🚨 Call 911</span>'
+            '<span class="cta-btn cta-urgent">📞 Call Care Team</span>'
+            '<div class="conclusion-reassurance">Please seek immediate medical attention.</div>'
+        ),
+    }
+    actions_html = cta_map.get(sev, cta_map["monitor"])
 
     return (
         f'<div class="conclusion-card sev-{sev}">'
@@ -477,6 +566,7 @@ def _render_conclusion_card(data: dict) -> str:
         f'<div class="value">{data.get("next_step", "")}</div>'
         f'</div>'
         f'{symptoms_html}'
+        f'<div class="conclusion-actions">{actions_html}</div>'
         f'</div>'
     )
 
@@ -654,7 +744,7 @@ if page == "💬 Patient Chat":
             if st.session_state.session_concluded:
                 st.markdown(
                     '<div class="chat-locked-msg">'
-                    '✅ This check-in is complete. Review the summary above.'
+                    'This check-in session has ended. Use the actions above, or start a new check-in if your symptoms change.'
                     '</div>',
                     unsafe_allow_html=True,
                 )

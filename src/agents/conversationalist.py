@@ -207,7 +207,7 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
 
     is_conclusion_turn = turn_number >= MAX_PATIENT_MESSAGES
 
-    did_use_tools = False
+    collected_text = []  # Accumulate text from ALL responses (including tool-use turns)
     reply = None
 
     # ── Tool-use loop ──
@@ -223,15 +223,16 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
         tool_calls = [b for b in response.content if b.type == "tool_use"]
         text_blocks = [b for b in response.content if b.type == "text"]
 
-        # ── No tool calls: extract text and we're done ──
+        # Always capture text, even alongside tool calls
+        for tb in text_blocks:
+            if tb.text.strip():
+                collected_text.append(tb.text.strip())
+
+        # ── No tool calls: we're done ──
         if not tool_calls:
-            reply_text = " ".join(tb.text.strip() for tb in text_blocks if tb.text.strip())
-            if reply_text:
-                reply = reply_text
             break
 
         # ── Execute tool calls ──
-        did_use_tools = True
         messages.append({"role": "assistant", "content": response.content})
 
         tool_results = []
@@ -255,10 +256,20 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
 
         messages.append({"role": "user", "content": tool_results})
 
+    # Use collected text if we got any
+    if collected_text:
+        reply = " ".join(collected_text)
+
     # ── Force a text reply if tools ran but no text came back ──
-    if reply is None:
+    if not reply:
         fresh_context = db.build_patient_context(session_id)
         fresh_prompt = build_system_prompt(session, fresh_context, turn_number)
+        fresh_prompt += (
+            "\n\nIMPORTANT: You have already logged the patient's symptoms using tools. "
+            "Now respond CONVERSATIONALLY to the patient. Acknowledge what they told you, "
+            "and ask ONE focused follow-up question. Do NOT just say 'noted' -- be warm "
+            "and clinically curious."
+        )
 
         response = client.messages.create(
             model="claude-sonnet-4-5-20250929",

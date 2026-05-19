@@ -970,7 +970,7 @@ if page == "💬 Patient Chat":
                         db.write_alert(
                             st.session_state.session_id,
                             "system-error",
-                            f"Conversationalist failed: {e}",
+                            f"Conversationalist failed: {type(e).__name__}",
                             signals=["agent_failure"],
                             recommended_action="Check API key and connection.",
                         )
@@ -1019,7 +1019,7 @@ if page == "💬 Patient Chat":
                     except Exception as e:
                         db.write_alert(
                             sid, "system-error",
-                            f"Risk Assessor failed: {e}",
+                            f"Risk Assessor failed: {type(e).__name__}",
                             signals=["agent_failure"],
                             recommended_action="Manual review recommended.",
                         )

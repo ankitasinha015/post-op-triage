@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS alerts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL REFERENCES session(id),
-    severity TEXT NOT NULL CHECK (severity IN ('routine', 'monitor', 'urgent', '911-now', 'system-error')),
+    severity TEXT NOT NULL CHECK (severity IN ('routine', 'monitor', 'urgent', 'critical', '911-now', 'system-error')),
     summary TEXT NOT NULL,
     signals TEXT,
     recommended_action TEXT,

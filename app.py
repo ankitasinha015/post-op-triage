@@ -3,6 +3,7 @@ AI Triage Nurse — Post-Op Recovery Agent
 Streamlit app with two pages: Patient Chat and Nurse Dashboard.
 """
 
+import datetime
 import json
 import os
 import ssl
@@ -453,6 +454,77 @@ st.markdown("""
         margin-top: 12px;
     }
 
+    /* Worklist */
+    .worklist-item {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 14px 16px;
+        border-radius: 10px;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.08);
+        margin-bottom: 8px;
+        transition: all 0.15s ease;
+    }
+    .worklist-item:hover {
+        background: rgba(255,255,255,0.06);
+        border-color: rgba(255,255,255,0.12);
+    }
+    .worklist-item.risk-high {
+        border-left: 3px solid #ef4444;
+    }
+    .worklist-item.risk-moderate {
+        border-left: 3px solid #f59e0b;
+    }
+    .worklist-item.risk-low {
+        border-left: 3px solid #10b981;
+    }
+    .worklist-score {
+        font-size: 22px;
+        font-weight: 700;
+        min-width: 48px;
+        text-align: center;
+    }
+    .worklist-details {
+        flex: 1;
+    }
+    .worklist-details .wl-name {
+        font-size: 14px;
+        font-weight: 600;
+        color: #e2e8f0;
+    }
+    .worklist-details .wl-meta {
+        font-size: 11px;
+        color: #64748b;
+        margin-top: 2px;
+    }
+    .worklist-details .wl-reasoning {
+        font-size: 12px;
+        color: #94a3b8;
+        margin-top: 6px;
+        line-height: 1.4;
+    }
+    .worklist-badge {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 8px;
+        border-radius: 4px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .worklist-badge.wb-urgent {
+        background: rgba(239,68,68,0.15);
+        color: #f87171;
+    }
+    .worklist-badge.wb-monitor {
+        background: rgba(245,158,11,0.15);
+        color: #fbbf24;
+    }
+    .worklist-badge.wb-routine {
+        background: rgba(16,185,129,0.15);
+        color: #34d399;
+    }
+
     /* Empty state */
     .empty-state {
         text-align: center;
@@ -617,6 +689,43 @@ def _render_conclusion_card(data: dict) -> str:
     )
 
 
+def _save_session_to_history(session_id: str, conclusion: dict) -> None:
+    """Save concluded session data to patient_history for longitudinal tracking."""
+    try:
+        session = db.get_session(session_id)
+        if not session:
+            return
+
+        severity = conclusion.get("severity", "routine")
+        risk_map = {"routine": "low", "monitor": "moderate", "urgent": "high", "critical": "critical"}
+        risk_level = risk_map.get(severity, "moderate")
+
+        symptoms_noted = conclusion.get("symptoms_noted", [])
+        summary = conclusion.get("summary", "Check-in completed.")
+
+        # Gather unresolved concerns from investigation gaps
+        gaps = db.get_investigation_gaps(session_id, only_unaddressed=True)
+        unresolved = [g["question"] for g in gaps]
+
+        # Resolved = addressed gaps
+        resolved_gaps = db.get_investigation_gaps(session_id, only_unaddressed=False)
+        resolved = [g["question"] for g in resolved_gaps if g["addressed"]]
+
+        db.save_patient_history(
+            session_id=session_id,
+            patient_name=session["patient_name"],
+            surgery_type=session["surgery_type"],
+            recovery_day=session["recovery_day"],
+            key_findings=symptoms_noted,
+            risk_level=risk_level,
+            unresolved_concerns=unresolved,
+            resolved_concerns=resolved,
+            session_summary=summary,
+        )
+    except Exception:
+        pass  # Don't crash the UI for history logging
+
+
 def _render_turn_counter(current_turn: int, max_turns: int = 4) -> str:
     """Return HTML for a turn progress indicator."""
     dots = ""
@@ -656,6 +765,12 @@ if not has_api_key:
         "```\nANTHROPIC_API_KEY=sk-ant-your-key-here\n```"
     )
     st.stop()
+
+# ─── Session state defaults ───
+if "dashboard_view" not in st.session_state:
+    st.session_state.dashboard_view = "worklist"  # "worklist" or "detail"
+if "detail_session_id" not in st.session_state:
+    st.session_state.detail_session_id = None
 
 # ─── Sidebar Navigation ───
 with st.sidebar:
@@ -725,9 +840,23 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
+    st.markdown("---")
+    if st.button("🗑️ Reset Database", use_container_width=True, help="Delete all sessions and start fresh"):
+        db_path = Path(__file__).parent / "triage.db"
+        for suffix in ["", "-wal", "-shm"]:
+            p = Path(str(db_path) + suffix)
+            if p.exists():
+                p.unlink()
+        db.init_db()
+        st.session_state.session_id = None
+        st.session_state.chat_messages = []
+        st.session_state.session_concluded = False
+        st.session_state.detail_session_id = None
+        st.rerun()
+
     st.markdown("""
-    <div style="position:absolute;bottom:16px;left:16px;right:16px;font-size:10px;color:#334155;">
-        Educational demo &middot; Not medical advice
+    <div style="font-size:10px;color:#334155;margin-top:16px;text-align:center;">
+        Educational demo · Not medical advice
     </div>
     """, unsafe_allow_html=True)
 
@@ -851,17 +980,20 @@ if page == "💬 Patient Chat":
                 if conclusion:
                     st.markdown(_render_conclusion_card(conclusion), unsafe_allow_html=True)
                     st.session_state.session_concluded = True
+                    _save_session_to_history(st.session_state.session_id, conclusion)
                 elif reply.strip().startswith("{") or '"conclusion"' in reply:
                     # JSON-like but parsing failed -- never show raw JSON to patient
-                    st.markdown(_render_conclusion_card({
+                    fallback_conclusion = {
                         "conclusion": True,
                         "severity": "monitor",
                         "summary": "Thank you for this check-in. We've noted everything you shared.",
                         "guidance": "Continue following your care team's instructions and rest.",
                         "next_step": "Check back in a few hours, or contact your care team if anything changes.",
                         "symptoms_noted": [],
-                    }), unsafe_allow_html=True)
+                    }
+                    st.markdown(_render_conclusion_card(fallback_conclusion), unsafe_allow_html=True)
                     st.session_state.session_concluded = True
+                    _save_session_to_history(st.session_state.session_id, fallback_conclusion)
                 else:
                     with st.chat_message("assistant"):
                         st.markdown(reply)
@@ -915,136 +1047,308 @@ if page == "💬 Patient Chat":
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 elif page == "📊 Nurse Dashboard":
 
-    st.markdown("""
-    <div class="page-header">
-        <div class="logo" style="background:linear-gradient(135deg,#059669,#10b981);">📊</div>
-        <div class="title-group">
-            <h1>Nurse Dashboard</h1>
-            <p>Real-time clinical monitoring and risk assessment</p>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Determine which view to show: worklist or patient detail
+    viewing_detail = st.session_state.get("detail_session_id") is not None
 
-    session_id = st.session_state.get("session_id")
+    # ──────────────────────────────────────────────
+    # VIEW: Patient Detail (navigated from worklist)
+    # ──────────────────────────────────────────────
+    if viewing_detail:
+        detail_sid = st.session_state.detail_session_id
+        session = db.get_session(detail_sid)
 
-    if not session_id:
-        st.markdown("""
-        <div class="empty-state">
-            <div class="empty-icon">⏳</div>
-            <p>Start a patient session from the sidebar to see clinical data here.</p>
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        # Refresh button
-        if st.button("🔄 Refresh Dashboard", use_container_width=False):
+        if not session:
+            st.error("Session not found.")
+            st.session_state.detail_session_id = None
             st.rerun()
-
-        # Load all data
-        alerts = db.get_alerts(session_id)
-        symptoms = db.get_symptoms(session_id)
-        vitals = db.get_vitals(session_id)
-        meds = db.get_meds(session_id)
-        risk_scores = db.get_risk_scores(session_id)
-        gaps = db.get_investigation_gaps(session_id, only_unaddressed=True)
-
-        # ── Alert Banner ──
-        if alerts:
-            latest = alerts[-1]
-            sev = latest["severity"]
-            icons = {
-                "routine": "✅", "monitor": "👁️", "urgent": "⚠️",
-                "critical": "🚨", "911-now": "🆘", "system-error": "⚙️",
-            }
-            st.markdown(
-                f'<div class="alert-banner alert-{sev}">'
-                f'<div class="alert-title">{icons.get(sev, "🔔")} {sev.upper()}</div>'
-                f'<div class="alert-body">{latest["summary"]}</div>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-            if latest.get("recommended_action"):
-                st.caption(f"**Recommended:** {latest['recommended_action']}")
         else:
-            st.markdown(
-                '<div class="alert-banner alert-routine">'
-                '<div class="alert-title">✅ ALL CLEAR</div>'
-                '<div class="alert-body">No alerts — routine monitoring</div>'
-                '</div>',
-                unsafe_allow_html=True,
-            )
+            # Load data
+            alerts = db.get_alerts(detail_sid)
+            symptoms = db.get_symptoms(detail_sid)
+            vitals = db.get_vitals(detail_sid)
+            meds = db.get_meds(detail_sid)
+            risk_scores = db.get_risk_scores(detail_sid)
+            conclusion_record = db.get_session_conclusion(detail_sid)
 
-        # ── Stats Grid ──
-        score = risk_scores[-1]["score"] if risk_scores else 0
-        s_color = "#10b981" if score <= 20 else "#f59e0b" if score <= 40 else "#f97316" if score <= 60 else "#ef4444"
-        st.markdown(f"""
-        <div class="stat-grid">
-            <div class="stat-card"><div class="stat-value" style="color:{s_color}">{score}</div><div class="stat-label">Risk Score</div></div>
-            <div class="stat-card"><div class="stat-value">{len(symptoms)}</div><div class="stat-label">Symptoms</div></div>
-            <div class="stat-card"><div class="stat-value">{len(vitals)}</div><div class="stat-label">Vitals</div></div>
-            <div class="stat-card"><div class="stat-value">{len(meds)}</div><div class="stat-label">Meds Taken</div></div>
+            # Filter out system-error alerts for display
+            clinical_alerts = [a for a in alerts if a["severity"] != "system-error"]
+
+            score = risk_scores[-1]["score"] if risk_scores else 0
+            s_color = "#10b981" if score <= 20 else "#f59e0b" if score <= 40 else "#f97316" if score <= 60 else "#ef4444"
+            sev_label = "LOW" if score <= 20 else "MODERATE" if score <= 40 else "HIGH" if score <= 60 else "CRITICAL"
+            is_concluded = conclusion_record is not None
+
+            # ── Back Button + Title ──
+            back_col, title_col = st.columns([1, 5])
+            with back_col:
+                if st.button("← Back", use_container_width=True):
+                    st.session_state.detail_session_id = None
+                    st.rerun()
+            with title_col:
+                st.markdown(f"""
+                <div style="display:flex;align-items:center;gap:16px;">
+                    <div>
+                        <span style="font-size:22px;font-weight:800;color:#f1f5f9;">{session["patient_name"]}</span>
+                        <span style="font-size:12px;color:#64748b;margin-left:8px;">
+                            {session["surgery_type"]} · Day {session["recovery_day"]}
+                        </span>
+                    </div>
+                    <span style="font-size:11px;font-weight:600;padding:4px 12px;border-radius:20px;
+                                {'background:rgba(16,185,129,0.15);color:#34d399;' if is_concluded else 'background:rgba(59,130,246,0.15);color:#60a5fa;'}">
+                        {'✅ Concluded' if is_concluded else '● Live'}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+            # ── Top Row: Risk Score + Stats ──
+            st.markdown("")
+            r_col, s1_col, s2_col, s3_col, s4_col = st.columns([2, 1, 1, 1, 1])
+
+            with r_col:
+                st.markdown(f"""
+                <div style="background:rgba(0,0,0,0.2);border:2px solid {s_color};border-radius:14px;
+                            padding:20px;text-align:center;">
+                    <div style="font-size:48px;font-weight:800;color:{s_color};line-height:1;">{score}</div>
+                    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px;
+                                color:{s_color};margin-top:4px;">{sev_label} RISK</div>
+                </div>
+                """, unsafe_allow_html=True)
+            with s1_col:
+                unique_symptoms = len({s["name"] for s in symptoms})
+                st.metric("Symptoms", unique_symptoms)
+            with s2_col:
+                st.metric("Vitals", len(vitals))
+            with s3_col:
+                st.metric("Meds", len(meds))
+            with s4_col:
+                st.metric("Alerts", len(clinical_alerts))
+
+            # ── Alert Banner (only clinical alerts, not system errors) ──
+            if clinical_alerts:
+                latest = clinical_alerts[-1]
+                sev = latest["severity"]
+                alert_icons = {"routine": "✅", "monitor": "👁️", "urgent": "⚠️", "critical": "🚨", "911-now": "🆘"}
+                st.markdown(
+                    f'<div class="alert-banner alert-{sev}" style="margin-top:16px;">'
+                    f'<div class="alert-title">{alert_icons.get(sev, "🔔")} {sev.upper()}</div>'
+                    f'<div class="alert-body">{latest["summary"]}</div>'
+                    f'</div>',
+                    unsafe_allow_html=True,
+                )
+                if latest.get("recommended_action"):
+                    st.caption(f"**Recommended:** {latest['recommended_action']}")
+
+            st.markdown("---")
+
+            # ── Two-Column Layout ──
+            left_col, right_col = st.columns([3, 2])
+
+            with left_col:
+                # ── Symptoms ──
+                st.markdown("#### 🩺 Symptoms")
+                if symptoms:
+                    # Deduplicate: keep only the LATEST entry per symptom name
+                    latest_by_name: dict[str, dict] = {}
+                    for s_item in symptoms:
+                        latest_by_name[s_item["name"]] = s_item  # last write wins (chronological)
+                    for s_item in latest_by_name.values():
+                        sev_val = s_item["severity"]
+                        sev_dot = "🔴" if sev_val >= 7 else "🟡" if sev_val >= 4 else "🟢"
+                        txt = s_item.get("free_text", "")
+                        detail_txt = f' — *"{txt}"*' if txt else ""
+                        st.markdown(f"{sev_dot} **{s_item['name']}** ({sev_val}/10){detail_txt}")
+                else:
+                    st.caption("No symptoms reported yet.")
+
+                # ── Vitals ──
+                st.markdown("#### 📊 Vitals")
+                if vitals:
+                    for v in vitals:
+                        st.markdown(f"• **{v['type']}**: {v['value']} {v['unit']}")
+                else:
+                    st.caption("No vitals recorded.")
+
+                # ── Meds ──
+                st.markdown("#### 💊 Medications")
+                if meds:
+                    for m in meds:
+                        st.markdown(f"• **{m['med_name']}** ({m['dose']}) — taken {m['taken_at']}")
+                else:
+                    st.caption("No medications logged.")
+
+            with right_col:
+                # ── Risk Trend ──
+                st.markdown("#### 📈 Risk Trend")
+                if risk_scores:
+                    scores_data = [r["score"] for r in risk_scores[-10:]]
+                    st.line_chart(scores_data, height=150, use_container_width=True)
+                    latest_risk = risk_scores[-1]
+                    if latest_risk.get("triggered_signals"):
+                        sigs = latest_risk["triggered_signals"]
+                        if isinstance(sigs, str):
+                            sigs = json.loads(sigs)
+                        if sigs:
+                            st.markdown("**Signals:** " + ", ".join(f"`{s}`" for s in sigs))
+                else:
+                    st.caption("Awaiting risk assessment...")
+
+                # ── Conclusion ──
+                if conclusion_record:
+                    risk_level = conclusion_record["risk_level"]
+                    rl_colors = {"low": "#10b981", "moderate": "#f59e0b", "high": "#f97316", "critical": "#ef4444"}
+                    rl_color = rl_colors.get(risk_level, "#64748b")
+                    st.markdown("#### 📝 Conclusion")
+                    st.markdown(
+                        f'<div style="border-left:3px solid {rl_color};padding:10px 14px;'
+                        f'background:rgba(255,255,255,0.03);border-radius:0 8px 8px 0;font-size:13px;'
+                        f'color:#e2e8f0;line-height:1.6;">'
+                        f'{conclusion_record["session_summary"]}'
+                        f'</div>',
+                        unsafe_allow_html=True,
+                    )
+
+            st.markdown("---")
+
+            # ── Expandable Sections ──
+            exp_left, exp_right = st.columns(2)
+
+            with exp_left:
+                # Conversation Transcript
+                messages = db.get_messages(detail_sid, limit=50)
+                with st.expander(f"💬 Conversation Transcript ({len(messages)} messages)", expanded=False):
+                    if messages:
+                        for msg in messages:
+                            role_icon = "🧑" if msg["role"] == "user" else "🤖"
+                            role_label = "Patient" if msg["role"] == "user" else "AI Nurse"
+                            content = msg["content"]
+                            if content.strip().startswith("{") and '"conclusion"' in content:
+                                content = "[Session conclusion]"
+                            ts = msg.get("created_at", "")[-8:]
+                            st.markdown(f"**{role_icon} {role_label}** `{ts}`")
+                            st.markdown(f"> {content}")
+                            st.markdown("")
+                    else:
+                        st.caption("No messages yet.")
+
+            with exp_right:
+                # Alert History
+                with st.expander(f"🔔 Alert History ({len(clinical_alerts)} alerts)", expanded=False):
+                    if clinical_alerts:
+                        for a in reversed(clinical_alerts):
+                            a_sev = a["severity"]
+                            a_icons = {"routine": "✅", "monitor": "👁️", "urgent": "⚠️", "critical": "🚨", "911-now": "🆘"}
+                            st.markdown(f"**{a_icons.get(a_sev, '🔔')} {a_sev.upper()}** — {a['summary']}")
+                            st.caption(a["created_at"])
+                            st.markdown("")
+                    else:
+                        st.caption("No alerts.")
+
+    # ──────────────────────────────────────────────
+    # VIEW: Worklist (default dashboard view)
+    # ──────────────────────────────────────────────
+    else:
+        st.markdown("""
+        <div class="page-header">
+            <div class="logo" style="background:linear-gradient(135deg,#059669,#10b981);">📊</div>
+            <div class="title-group">
+                <h1>Nurse Dashboard</h1>
+                <p>Patient worklist — sorted by clinical risk</p>
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
-        # ── Risk Score Trend ──
-        if risk_scores:
-            st.markdown('<div class="section-title">Risk Score Trend</div>', unsafe_allow_html=True)
-            scores_list = [r["score"] for r in risk_scores[-10:]]
-            st.line_chart(scores_list, height=120, use_container_width=True)
+        # Refresh
+        ref_left, ref_right = st.columns([4, 1])
+        with ref_left:
+            st.caption(f"🕐 {datetime.datetime.now().strftime('%H:%M:%S')}")
+        with ref_right:
+            if st.button("🔄 Refresh", use_container_width=True):
+                st.rerun()
 
-            latest_risk = risk_scores[-1]
-            if latest_risk.get("reasoning"):
-                st.caption(latest_risk["reasoning"])
-            if latest_risk.get("triggered_signals"):
-                sigs = latest_risk["triggered_signals"]
-                if isinstance(sigs, str):
-                    sigs = json.loads(sigs)
-                if sigs:
-                    st.markdown("**Triggered Signals:** " + " ".join(f"`{s}`" for s in sigs))
+        all_sessions = db.get_all_sessions_with_risk()
 
-        # ── Investigation Gaps ──
-        if gaps:
-            st.markdown('<div class="section-title">Investigation Gaps</div>', unsafe_allow_html=True)
-            for g in gaps:
-                p = g["priority"]
-                st.markdown(
-                    f'<div class="gap-pill gap-{p}">'
-                    f'<strong>[{p.upper()}]</strong> {g["question"]}'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
-
-        # ── Clinical Timeline ──
-        st.markdown('<div class="section-title">Clinical Timeline</div>', unsafe_allow_html=True)
-
-        items = []
-        for s in symptoms:
-            cls = "tl-red" if s["severity"] >= 7 else "tl-yel" if s["severity"] >= 4 else "tl-grn"
-            dot = "🔴" if s["severity"] >= 7 else "🟡" if s["severity"] >= 4 else "🟢"
-            txt = s.get("free_text", "")
-            detail = f' — <em>"{txt}"</em>' if txt else ""
-            items.append((s["logged_at"], cls, f'{dot} <b>{s["name"]}</b> ({s["severity"]}/10){detail}'))
-        for v in vitals:
-            items.append((v["logged_at"], "tl-grn", f'📊 <b>{v["type"]}</b>: {v["value"]} {v["unit"]}'))
-        for m in meds:
-            items.append((m["logged_at"], "tl-grn", f'💊 <b>{m["med_name"]}</b> ({m["dose"]}) — taken {m["taken_at"]}'))
-
-        items.sort(key=lambda x: x[0])
-
-        if items:
-            for ts, cls, label in items:
-                t = ts.split(" ")[-1][:5] if " " in ts else ""
-                st.markdown(
-                    f'<div class="tl-item {cls}">'
-                    f'<span style="color:#475569;font-size:10px;">{t}</span> {label}'
-                    f'</div>',
-                    unsafe_allow_html=True,
-                )
+        if not all_sessions:
+            st.markdown("""
+            <div class="empty-state">
+                <div class="empty-icon">⏳</div>
+                <p>No patient sessions yet. Start one from the sidebar.</p>
+            </div>
+            """, unsafe_allow_html=True)
         else:
-            st.caption("No observations yet. Start chatting with the patient.")
+            # Summary stats
+            total = len(all_sessions)
+            high_risk = sum(1 for s in all_sessions if s["risk_score"] > 60)
+            moderate_risk = sum(1 for s in all_sessions if 30 < s["risk_score"] <= 60)
+            needs_review = sum(1 for s in all_sessions if s["urgent_alert_count"] > 0)
 
-        # ── Alert History ──
-        if len(alerts) > 1:
-            st.markdown('<div class="section-title">Alert History</div>', unsafe_allow_html=True)
-            with st.expander(f"{len(alerts) - 1} previous alerts"):
-                for a in reversed(alerts[:-1]):
-                    st.markdown(f"**{a['severity'].upper()}**: {a['summary']}  \n_{a['created_at']}_")
+            sum_cols = st.columns(4)
+            with sum_cols[0]:
+                st.metric("Total Patients", total)
+            with sum_cols[1]:
+                st.metric("High Risk", high_risk, delta=None)
+            with sum_cols[2]:
+                st.metric("Moderate Risk", moderate_risk, delta=None)
+            with sum_cols[3]:
+                st.metric("Needs Review", needs_review, delta=None)
+
+            st.markdown("")
+
+            # Patient cards
+            for s in all_sessions:
+                r_score = s["risk_score"]
+                s_color_wl = "#ef4444" if r_score > 60 else "#f59e0b" if r_score > 30 else "#10b981"
+                risk_class = "risk-high" if r_score > 60 else "risk-moderate" if r_score > 30 else "risk-low"
+
+                # Badge
+                if s["urgent_alert_count"] > 0:
+                    badge = "🔴 Needs Review"
+                    badge_bg = "rgba(239,68,68,0.15)"
+                    badge_color = "#f87171"
+                elif r_score > 30:
+                    badge = "🟡 Monitoring"
+                    badge_bg = "rgba(245,158,11,0.15)"
+                    badge_color = "#fbbf24"
+                else:
+                    badge = "🟢 Stable"
+                    badge_bg = "rgba(16,185,129,0.15)"
+                    badge_color = "#34d399"
+
+                reasoning = s.get("risk_reasoning") or s.get("latest_alert") or "No assessment yet"
+                if len(reasoning) > 120:
+                    reasoning = reasoning[:117] + "..."
+
+                # Card layout: info + button
+                card_col, btn_col = st.columns([6, 1])
+
+                with card_col:
+                    st.markdown(f"""
+                    <div style="display:flex;align-items:center;gap:16px;padding:16px 20px;
+                                background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
+                                border-left:4px solid {s_color_wl};border-radius:10px;margin-bottom:4px;">
+                        <div style="text-align:center;min-width:50px;">
+                            <div style="font-size:28px;font-weight:800;color:{s_color_wl};">{r_score}</div>
+                            <div style="font-size:8px;text-transform:uppercase;letter-spacing:1px;color:#475569;">RISK</div>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;">
+                                <span style="font-size:15px;font-weight:700;color:#e2e8f0;">{s["patient_name"]}</span>
+                                <span style="font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;
+                                            background:{badge_bg};color:{badge_color};">{badge}</span>
+                            </div>
+                            <div style="font-size:12px;color:#64748b;">{s["surgery_type"]} · Day {s["recovery_day"]} · {s["symptom_count"]} symptoms</div>
+                            <div style="font-size:12px;color:#94a3b8;margin-top:4px;line-height:1.4;">{reasoning}</div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                with btn_col:
+                    if st.button("View →", key=f"wl_{s['id']}", use_container_width=True):
+                        st.session_state.detail_session_id = s["id"]
+                        # Also switch the active session for chat
+                        st.session_state.session_id = s["id"]
+                        msgs = db.get_messages(s["id"], limit=50)
+                        st.session_state.chat_messages = [
+                            {"role": m["role"], "content": m["content"]} for m in msgs
+                        ]
+                        concluded = db.get_session_conclusion(s["id"])
+                        st.session_state.session_concluded = concluded is not None
+                        st.rerun()

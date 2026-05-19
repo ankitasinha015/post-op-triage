@@ -168,3 +168,64 @@ class TestPatientHistory:
         )
         history = db.get_patient_history("TestPatient", exclude_session_id=session_id)
         assert len(history) == 0
+
+
+class TestWorklist:
+    def test_get_all_sessions_with_risk_empty(self):
+        sessions = db.get_all_sessions_with_risk()
+        # At minimum returns sessions created by other tests (in-memory DB shared)
+        assert isinstance(sessions, list)
+
+    def test_get_all_sessions_with_risk_ordered(self):
+        sid1 = db.create_session("Total Knee Replacement", 3, "LowRisk")
+        sid2 = db.create_session("Total Hip Replacement", 5, "HighRisk")
+        db.write_risk_score(sid1, 15, [], "routine recovery")
+        db.write_risk_score(sid2, 75, ["dvt_leg_swelling"], "urgent DVT concern")
+
+        sessions = db.get_all_sessions_with_risk()
+        # HighRisk (75) should come before LowRisk (15)
+        names = [s["patient_name"] for s in sessions]
+        assert names.index("HighRisk") < names.index("LowRisk")
+        # Check fields present
+        high = next(s for s in sessions if s["patient_name"] == "HighRisk")
+        assert high["risk_score"] == 75
+        assert high["risk_reasoning"] == "urgent DVT concern"
+        assert "dvt_leg_swelling" in high["triggered_signals"]
+
+    def test_get_all_sessions_no_risk_score(self):
+        sid = db.create_session("Laparoscopic Appendectomy", 1, "NewPatient")
+        sessions = db.get_all_sessions_with_risk()
+        new = next(s for s in sessions if s["patient_name"] == "NewPatient")
+        assert new["risk_score"] == 0
+        assert new["triggered_signals"] == []
+
+    def test_get_session_conclusion_none(self):
+        sid = db.create_session("Total Knee Replacement", 3, "NoConclude")
+        assert db.get_session_conclusion(sid) is None
+
+    def test_get_session_conclusion_returns_data(self):
+        sid = db.create_session("Total Knee Replacement", 3, "Concluded")
+        db.save_patient_history(
+            session_id=sid, patient_name="Concluded",
+            surgery_type="Total Knee Replacement", recovery_day=3,
+            key_findings=["pain", "swelling"],
+            risk_level="moderate",
+            unresolved_concerns=["check wound drainage"],
+            resolved_concerns=[],
+            session_summary="Patient reports moderate pain and swelling.",
+        )
+        result = db.get_session_conclusion(sid)
+        assert result is not None
+        assert result["risk_level"] == "moderate"
+        assert "pain" in result["key_findings"]
+        assert "check wound drainage" in result["unresolved_concerns"]
+        assert result["session_summary"] == "Patient reports moderate pain and swelling."
+
+    def test_critical_severity_in_alerts(self):
+        """Verify that 'critical' severity is now accepted by the alerts table."""
+        sid = db.create_session("Total Knee Replacement", 7, "CritTest")
+        alert_id = db.write_alert(sid, "critical", "Critical severity test",
+                                  signals=["test"], recommended_action="Test")
+        assert alert_id > 0
+        alerts = db.get_alerts(sid)
+        assert any(a["severity"] == "critical" for a in alerts)

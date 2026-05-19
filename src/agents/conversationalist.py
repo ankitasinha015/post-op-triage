@@ -65,10 +65,22 @@ a 5 earlier -- has it changed?"
 
 WHEN TO USE YOUR TOOLS:
 - log_symptom: When you have enough information to meaningfully characterize the symptom. \
-Don't log vague complaints -- clarify first, then log with appropriate severity.
+Don't log vague complaints -- clarify first, then log with appropriate severity. \
+IMPORTANT: Do NOT re-log a symptom that is already in the patient context above. \
+Only log NEW symptoms or if severity has SIGNIFICANTLY changed (e.g. 3 -> 7). \
+Check the SYMPTOMS section in the context before logging.
 - log_vital: When the patient gives you a concrete measurement.
 - log_med_taken: When the patient tells you about medication they took.
 - ask_clarifying: When a symptom is too vague to assess. Use this to get the discriminating detail.
+
+CRITICAL — YOUR THINKING IS INTERNAL ONLY:
+NEVER show your clinical reasoning, hypotheses, or internal thought process to the patient. \
+NEVER write "My thinking:", "I'm considering:", "Clinically:", "My assessment:", or any similar prefix. \
+The patient should ONLY see a warm, natural, conversational reply. Your reasoning happens silently — \
+the patient sees the RESULT of your thinking (a good question), not the thinking itself.
+
+WRONG: "My thinking: This could be DVT. Let me ask about location. — Is it one leg or both?"
+RIGHT: "Thanks for telling me about that. Can you describe where exactly the swelling is — is it more in one leg, or both?"
 
 TONE: Warm, concise (2-4 sentences), never alarming. You're gathering intelligence for the nurse, \
 not diagnosing. If something sounds truly emergent (can't breathe, chest pain, uncontrolled bleeding), \
@@ -170,6 +182,71 @@ def build_system_prompt(session: dict, patient_context: str, turn_number: int = 
         prompt += "\n\n" + investigation_gaps
 
     return prompt
+
+
+import re
+
+# Patterns that indicate the agent is leaking its internal reasoning
+_REASONING_PREFIXES = re.compile(
+    r"^(?:My thinking|I'm thinking|Thinking|My assessment|Clinically|"
+    r"Clinical reasoning|My reasoning|Internal note|Assessment|"
+    r"My clinical thinking|I'm considering|Let me think)\s*[:—\-]",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def _strip_internal_reasoning(reply: str) -> str:
+    """Remove any leaked internal reasoning from the agent's reply.
+
+    If the agent outputs "My thinking: ... actual reply", strip the
+    reasoning prefix and keep only the patient-facing content.
+    """
+    if not reply:
+        return reply
+
+    # Check for reasoning prefixes
+    match = _REASONING_PREFIXES.search(reply)
+    if not match:
+        return reply
+
+    # Strategy: split on the reasoning block and find the conversational part.
+    # The pattern is usually: "My thinking: <reasoning>\n\n<actual reply>"
+    # or: "My thinking: <reasoning>. <actual reply starting with patient name>"
+    lines = reply.split("\n\n")
+    if len(lines) > 1:
+        # Drop paragraphs that start with reasoning prefixes
+        clean_parts = [
+            p for p in lines
+            if not _REASONING_PREFIXES.search(p.strip())
+        ]
+        if clean_parts:
+            return "\n\n".join(clean_parts).strip()
+
+    # Fallback: if it's a single block, try to find where the actual
+    # patient-facing reply starts (after the reasoning)
+    # Look for a sentence that addresses the patient directly
+    sentences = re.split(r'(?<=[.!?])\s+', reply)
+    patient_facing = []
+    found_patient_content = False
+    for sentence in sentences:
+        if found_patient_content:
+            patient_facing.append(sentence)
+        elif not _REASONING_PREFIXES.search(sentence) and not sentence.strip().startswith(("(", "[")):
+            # This sentence doesn't look like reasoning
+            # Check if it's conversational (addresses patient, asks question, etc.)
+            if any(kw in sentence.lower() for kw in [
+                "thank", "tell me", "can you", "how", "where", "when",
+                "that's", "i understand", "i hear", "let me", "could you",
+                "describe", "notice", "help me understand",
+            ]):
+                found_patient_content = True
+                patient_facing.append(sentence)
+
+    if patient_facing:
+        return " ".join(patient_facing).strip()
+
+    # Last resort: return as-is (better than returning nothing)
+    return reply
 
 
 def _count_patient_messages(session_id: str) -> int:
@@ -292,6 +369,10 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
             })
         else:
             reply = "Thank you for sharing that. I've noted it in your chart. How else are you feeling?"
+
+    # ── Guardrail: strip leaked internal reasoning ──
+    if not is_conclusion_turn:
+        reply = _strip_internal_reasoning(reply)
 
     # ── Guardrail: output content filter (skip for JSON conclusions) ──
     if not is_conclusion_turn:

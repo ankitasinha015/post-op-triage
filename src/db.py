@@ -179,6 +179,50 @@ def get_risk_scores(session_id: str) -> list[dict]:
     return results
 
 
+def get_all_sessions_with_risk() -> list[dict]:
+    """Get the LATEST session per patient with their risk score for the nurse worklist.
+    Groups by patient_name so repeat demo sessions don't clutter the list.
+    Returns sessions sorted by risk score (highest first)."""
+    conn = _get_conn()
+    rows = conn.execute("""
+        SELECT s.id, s.patient_name, s.surgery_type, s.recovery_day, s.started_at,
+               COALESCE(r.score, 0) as risk_score,
+               r.reasoning as risk_reasoning,
+               r.triggered_signals,
+               (SELECT COUNT(*) FROM symptoms WHERE session_id = s.id) as symptom_count,
+               (SELECT COUNT(*) FROM alerts WHERE session_id = s.id
+                AND severity IN ('urgent', 'critical', '911-now')) as urgent_alert_count,
+               (SELECT summary FROM alerts WHERE session_id = s.id
+                AND severity != 'system-error'
+                ORDER BY id DESC LIMIT 1) as latest_alert
+        FROM session s
+        INNER JOIN (
+            SELECT patient_name, MAX(started_at) as max_started
+            FROM session
+            GROUP BY patient_name
+        ) latest ON s.patient_name = latest.patient_name AND s.started_at = latest.max_started
+        LEFT JOIN (
+            SELECT session_id, score, reasoning, triggered_signals,
+                   ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY id DESC) as rn
+            FROM risk_scores
+        ) r ON r.session_id = s.id AND r.rn = 1
+        ORDER BY COALESCE(r.score, 0) DESC, s.started_at DESC
+        LIMIT 20
+    """).fetchall()
+    results = []
+    for row in rows:
+        d = dict(row)
+        if d.get("triggered_signals"):
+            try:
+                d["triggered_signals"] = json.loads(d["triggered_signals"])
+            except (json.JSONDecodeError, TypeError):
+                d["triggered_signals"] = []
+        else:
+            d["triggered_signals"] = []
+        results.append(d)
+    return results
+
+
 def get_session_state(session_id: str) -> dict:
     session = get_session(session_id)
     if not session:
@@ -229,6 +273,25 @@ def get_patient_history(patient_name: str, exclude_session_id: str = "") -> list
         d["resolved_concerns"] = json.loads(d["resolved_concerns"])
         results.append(d)
     return results
+
+
+def get_session_conclusion(session_id: str) -> dict | None:
+    """Get the conclusion/history record for a concluded session."""
+    conn = _get_conn()
+    row = conn.execute(
+        """SELECT session_summary, risk_level, key_findings,
+                  unresolved_concerns, resolved_concerns, recorded_at
+           FROM patient_history WHERE session_id = ?
+           ORDER BY id DESC LIMIT 1""",
+        (session_id,),
+    ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["key_findings"] = json.loads(d["key_findings"])
+    d["unresolved_concerns"] = json.loads(d["unresolved_concerns"])
+    d["resolved_concerns"] = json.loads(d["resolved_concerns"])
+    return d
 
 
 def write_investigation_gap(session_id: str, question: str,

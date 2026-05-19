@@ -1,6 +1,6 @@
 # AI Triage Nurse — Post-Op Recovery Agent
 
-A multi-agent AI system that simulates a post-operative recovery triage nurse. Patients chat naturally about how they're feeling; three Claude-powered agents collaborate behind the scenes to collect symptoms, investigate clinical patterns, and escalate alerts to a real-time nurse dashboard.
+A multi-agent AI system that simulates a post-operative recovery triage nurse. Patients chat naturally about how they're feeling; three Claude-powered agents collaborate behind the scenes to collect symptoms, investigate clinical patterns, and escalate alerts to a real-time nurse dashboard.  https://post-op-triage.streamlit.app/
 
 **This is not medical advice.** It's a portfolio project demonstrating multi-agent architecture, clinical reasoning patterns, and AI safety guardrails.
 

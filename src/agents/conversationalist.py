@@ -118,10 +118,16 @@ def build_system_prompt(session: dict, patient_context: str) -> str:
 def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) -> str:
     """
     Run one conversational turn. Returns the assistant's text reply.
-    Handles the tool-use loop: Claude may call tools, we execute them
+
+    Tool-use loop: Claude may call tools (log_symptom, etc.), we execute them
     and feed results back until Claude produces a final text response.
+
+    Key design: if tools execute but Claude doesn't produce a patient-facing
+    reply, we make one final API call WITHOUT tools to force a text response.
+    This prevents the "silent tool call" bug where data gets logged but the
+    patient sees a generic fallback.
     """
-    MAX_ITERATIONS = 6
+    MAX_TOOL_ITERATIONS = 5
 
     session = db.get_session(session_id)
     if not session:
@@ -135,12 +141,10 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
     patient_context = db.build_patient_context(session_id)
     system_prompt = build_system_prompt(session, patient_context)
 
-    # Collect text across all loop iterations — Claude sometimes sends
-    # text alongside tool calls (e.g. "Let me log that..." + tool_use).
-    # We want the LAST substantive text the model produces.
-    collected_text = []
+    did_use_tools = False
 
-    for iteration in range(MAX_ITERATIONS):
+    # ── Tool-use loop ──
+    for iteration in range(MAX_TOOL_ITERATIONS):
         response = client.messages.create(
             model="claude-sonnet-4-5-20250929",
             max_tokens=1024,
@@ -152,17 +156,18 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
         tool_calls = [b for b in response.content if b.type == "tool_use"]
         text_blocks = [b for b in response.content if b.type == "text"]
 
-        # Capture any text from this iteration
-        for tb in text_blocks:
-            if tb.text.strip():
-                collected_text.append(tb.text.strip())
-
-        # No more tool calls → we're done
+        # ── No tool calls: extract text and we're done ──
         if not tool_calls:
+            reply_text = " ".join(tb.text.strip() for tb in text_blocks if tb.text.strip())
+            if reply_text:
+                reply = reply_text
+                break
+            # Empty response — fall through to the forced reply below
+            reply = None
             break
 
-        # If stop_reason is "end_turn" but there are tool calls,
-        # the model is done thinking — execute tools and continue
+        # ── Execute tool calls ──
+        did_use_tools = True
         messages.append({"role": "assistant", "content": response.content})
 
         tool_results = []
@@ -185,14 +190,33 @@ def run_turn(client: anthropic.Anthropic, session_id: str, user_message: str) ->
             })
 
         messages.append({"role": "user", "content": tool_results})
-
-    # Use the last collected text as the reply (it's the final patient-facing message).
-    # Fall back to earlier text if the last iteration had none.
-    if collected_text:
-        reply = collected_text[-1]
     else:
-        reply = "I appreciate you sharing that. Can you tell me a bit more about what you're experiencing?"
+        # Loop exhausted without a clean break — extract whatever text we can
+        reply = None
 
+    # ── Force a text reply if tools ran but no patient-facing text came back ──
+    # This is the key fix: after logging symptoms/vitals, Claude sometimes
+    # ends with stop_reason="end_turn" and no text. We make one final call
+    # WITHOUT tools so the model MUST produce a text response.
+    if reply is None or (did_use_tools and not reply):
+        # Rebuild patient context (now includes the just-logged data)
+        fresh_context = db.build_patient_context(session_id)
+        fresh_prompt = build_system_prompt(session, fresh_context)
+
+        response = client.messages.create(
+            model="claude-sonnet-4-5-20250929",
+            max_tokens=1024,
+            system=fresh_prompt,
+            messages=messages,
+            # No tools → Claude MUST respond with text
+        )
+        text_blocks = [b for b in response.content if b.type == "text"]
+        reply = " ".join(tb.text.strip() for tb in text_blocks if tb.text.strip())
+
+    if not reply:
+        reply = "Thank you for sharing that. I've noted it in your chart. How else are you feeling?"
+
+    # ── Guardrail: output content filter ──
     violation = check_output_content(reply)
     if violation:
         reply = sanitize_reply(reply, violation)

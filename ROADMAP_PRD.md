@@ -53,7 +53,7 @@ Sarah (Patient), Age 60, Knee Replacement, post-op recovery phase
 
 | Challenge | Status Quo | ChatGPT/Copilots | RapidAI |
 |---|---|---|---|
-| Predict early risk | Manual, late | No personal data or prediction | Context-aware multi-agent AI with 27 red-flag rules, detects risk 2-3 days before symptoms |
+| Predict early risk | Manual, late | No personal data or prediction | Context-aware multi-agent AI with 21 red-flag rules, detects risk 2-3 days before symptoms |
 | False alarms | High, frustrating | Random hallucinations | <10% false-positive via 5-layer guardrail system (hallucination detector, score sanity, input validator) |
 | Photo/wearable data | Not used | Can't process/secure | Designed for wound photo analysis and device data integration |
 | Explainability | Black-box/manual | Black-box logic | Patient-facing "why" via transparent reasoning + clinician audit trail with triggered signals |
@@ -69,7 +69,7 @@ Sarah (Patient), Age 60, Knee Replacement, post-op recovery phase
 
 3. **Dynamic Planning & Escalation:** When faced with ambiguous symptoms, RapidAI's Risk Assessor runs an agentic investigation loop (up to 6 iterations) — calling tools to check symptom trends, vital trajectories, medication masking effects, and time-gap analysis. It can flag investigation gaps for the Conversationalist to probe in the next turn. Rule-based systems can't handle this adaptive reasoning.
 
-4. **Real Decision-Making:** Recovery risks come in complex, overlapping combinations (mild swelling + pain language + activity drop). The 27-signal red flag matrix combined with agentic tool-use surfaces weak-signal risks that static rules would miss or over-alert on — reducing both missed complications and alert fatigue.
+4. **Real Decision-Making:** Recovery risks come in complex, overlapping combinations (mild swelling + pain language + activity drop). The 21-signal red flag matrix combined with agentic tool-use surfaces weak-signal risks that static rules would miss or over-alert on — reducing both missed complications and alert fatigue.
 
 ---
 
@@ -183,7 +183,7 @@ Every time RapidAI sends an alert or risk score, it transparently "shows its wor
 
 **3. Automated AI Symptom Assessment**
 - Real-time analysis using surgery-specific clinical knowledge (expected pain curves, milestone windows)
-- 27 red-flag rules evaluated against patient data (infection, DVT, respiratory, cardiac, wound, pain, medication signals)
+- 21 red-flag rules evaluated against patient data (infection, DVT, respiratory, cardiac, wound, pain, medication signals)
 - Medication masking detection (NSAIDs suppressing fever, opioids masking pain)
 - Symptom trajectory analysis (improving → worsening pattern detection)
 

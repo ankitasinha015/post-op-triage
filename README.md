@@ -6,7 +6,7 @@ A multi-agent AI system that simulates a post-operative recovery triage nurse. P
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
 ![Anthropic](https://img.shields.io/badge/Claude-Sonnet%20%2B%20Haiku-purple)
-![Tests](https://img.shields.io/badge/Tests-126%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/Tests-139%20passing-brightgreen)
 
 ---
 
@@ -109,7 +109,7 @@ Not a rule engine. Reference knowledge that agents use to reason — the same wa
 
 ```bash
 # Clone and install
-git clone https://github.com/YOUR_USERNAME/post-op-triage.git
+git clone https://github.com/ankitasinha015/post-op-triage.git
 cd post-op-triage
 pip install -e ".[dev]"
 
@@ -156,7 +156,7 @@ post-op-triage/
       hip_day4_dvt.json
       appendix_day1.json
       appendix_day5_abscess.json
-  tests/                          # 126 tests, all run without API calls
+  tests/                          # 139 tests, all run without API calls
   docs/
     ARCHITECTURE.md               # Full technical architecture document
 ```
@@ -165,7 +165,7 @@ post-op-triage/
 
 ## Test Coverage
 
-**126 tests**, all running without API calls (pure logic, DB operations, tool execution):
+**139 tests**, all running without API calls (pure logic, DB operations, tool execution):
 
 ```
 tests/test_db.py                    15 tests  — CRUD, investigation gaps, patient context
@@ -212,10 +212,10 @@ The architecture is designed for this swap: `get_surgery_knowledge()` changes fr
 
 ## Built With
 
-- [Anthropic Claude API](https://docs.anthropic.com/) — Claude Sonnet 4 + Haiku 4.5
+- [Anthropic Claude API](https://docs.anthropic.com/) — Claude Sonnet 4.5 + Haiku 4.5
 - [Streamlit](https://streamlit.io/) — Two-column dashboard UI
 - [SQLite](https://sqlite.org/) — Shared agent state with WAL mode
-- [pytest](https://pytest.org/) — 126 tests, no API mocking needed
+- [pytest](https://pytest.org/) — 139 tests, no API mocking needed
 
 ---
 

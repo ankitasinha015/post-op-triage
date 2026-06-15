@@ -143,16 +143,20 @@ def send_message(session_id: str, req: SendMessageRequest):
     if emergency:
         db.save_message(session_id, "user", req.message)
         db.write_alert(
-            session_id, "911-now", emergency["alert"],
-            signals=["emergency_bypass"],
-            recommended_action=emergency["action"],
+            session_id, "911-now", emergency["summary"],
+            signals=emergency["signals"],
+            recommended_action=emergency["recommended_action"],
         )
-        reply = emergency["reply"]
+        reply = (
+            "I'm detecting emergency keywords in your message. "
+            "If you are experiencing a life-threatening emergency, please call 911 immediately. "
+            "A clinical team member has been alerted."
+        )
         db.save_message(session_id, "assistant", reply)
         return {
             "reply": reply,
             "emergency": True,
-            "alert": emergency["alert"],
+            "alert": emergency["summary"],
         }
 
     import anthropic
@@ -205,8 +209,12 @@ def _run_risk_pipeline_async(client, session_id: str):
                 )
                 if guardrail_result and guardrail_result.get("should_escalate"):
                     escalate(client, session_id, risk_result)
-        except Exception:
-            pass
+        except Exception as e:
+            db.write_alert(
+                session_id, "system-error",
+                f"Risk pipeline failed: {type(e).__name__}",
+                signals=["pipeline_failure"],
+            )
 
     thread = threading.Thread(target=_run, daemon=True)
     thread.start()
@@ -251,6 +259,8 @@ def get_worklist():
 
 @app.post("/api/reset-db")
 def reset_db():
+    if os.environ.get("ENVIRONMENT", "development") == "production":
+        raise HTTPException(status_code=403, detail="Database reset disabled in production")
     db_path = Path(__file__).parent.parent / "triage.db"
     for suffix in ["", "-wal", "-shm"]:
         p = Path(str(db_path) + suffix)

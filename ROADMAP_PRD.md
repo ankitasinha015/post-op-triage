@@ -77,30 +77,113 @@ Sarah (Patient), Age 60, Knee Replacement, post-op recovery phase
 
 ### 1.1 Architecture Overview
 
-RapidAI uses a **multi-agent orchestration** architecture with three specialized Claude-powered AI agents:
+RapidAI uses a **multi-agent orchestration** architecture with three specialized Claude-powered AI agents coordinated through a shared SQLite database:
 
+#### Multi-Agent Pipeline
+
+```mermaid
+flowchart TD
+    subgraph INPUT["📱 Patient Input"]
+        A["Patient sends message\n(natural language)"]
+    end
+
+    subgraph SAFETY["🛡️ Layer 1 — Emergency Bypass"]
+        B{"23 regex patterns\n(chest pain, can't breathe,\nseizure, suicide, etc.)"}
+    end
+
+    subgraph CONV["🤖 Conversationalist Agent — Claude Sonnet 4.5"]
+        direction TB
+        C["System Prompt\n+ Surgery Knowledge\n+ Med Context\n+ Investigation Gaps"]
+        C --> D["Tool-Use Loop (max 4 turns)"]
+        D --> E["log_symptom\n(name, severity 0-10, text)"]
+        D --> F["log_vital\n(type, value, unit)"]
+        D --> G["log_med_taken\n(name, dose, time)"]
+        D --> H["ask_clarifying\n(question, priority)"]
+    end
+
+    subgraph GUARD_CONV["🛡️ Guardrails"]
+        I["L2: Output Filter\n60+ patterns block\ndiagnosis & prescription"]
+        J["L5: Input Validator\nseverity 0-10, type enums,\nSQL injection prevention"]
+    end
+
+    subgraph RISK["🔬 Risk Assessor Agent — Claude Sonnet 4.5"]
+        direction TB
+        K["Agentic Investigation Loop\n(max 6 iterations)"]
+        K --> L["get_symptom_trend"]
+        K --> M["get_vital_trend"]
+        K --> N["check_med_context"]
+        K --> O["get_time_since_last"]
+        K --> P["flag_investigation_gap"]
+        K --> Q["write_risk_alert\n(score, signals, reasoning)"]
+    end
+
+    subgraph GUARD_RISK["🛡️ Guardrails"]
+        R["L3: Hallucination Detector\nsignal-to-evidence mapping"]
+        S["L4: Score Sanity Check\nfloor/ceiling enforcement"]
+    end
+
+    subgraph ESC["⚡ Escalator Agent — Claude Haiku 4.5"]
+        T["Score-to-Severity Mapping"]
+        T --> U["0-20: Skip"]
+        T --> V["21-40: Monitor"]
+        T --> W["41-60: Urgent"]
+        T --> X["61-80: Critical"]
+        T --> Y["81+: 911-Now"]
+    end
+
+    subgraph OUTPUT["📊 Outputs"]
+        Z["Patient gets\nimmediate reply\n(< 3 sec)"]
+        AA["Nurse Dashboard\nworklist sorted\nby risk score"]
+        BB["911 Alert\nimmediate\nescalation"]
+    end
+
+    A --> B
+    B -- "🚨 Emergency detected" --> BB
+    B -- "No emergency" --> C
+    J -.- D
+    D --> I
+    I --> Z
+    D -- "background thread\n(async)" --> K
+    L & M & N & O --> R
+    Q --> S
+    S --> T
+    T --> AA
+
+    style INPUT fill:#e8f4fd,stroke:#2196F3,stroke-width:2px
+    style SAFETY fill:#ffebee,stroke:#f44336,stroke-width:2px
+    style CONV fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px
+    style RISK fill:#fff3e0,stroke:#FF9800,stroke-width:2px
+    style ESC fill:#f3e5f5,stroke:#9C27B0,stroke-width:2px
+    style OUTPUT fill:#e0f2f1,stroke:#009688,stroke-width:2px
+    style GUARD_CONV fill:#fce4ec,stroke:#e91e63,stroke-width:1px,stroke-dasharray: 5 5
+    style GUARD_RISK fill:#fce4ec,stroke:#e91e63,stroke-width:1px,stroke-dasharray: 5 5
+    style BB fill:#f44336,color:#fff,stroke:#b71c1c,stroke-width:3px
 ```
-Patient Message
-    ↓
-[Layer 1: Emergency Bypass] ← 23 regex patterns (chest pain, can't breathe, etc.)
-    ↓ (if no emergency)
-[Conversationalist Agent] ← Claude Sonnet 4.5
-    │  Tools: log_symptom, log_vital, log_med_taken, ask_clarifying
-    │  Guardrails: Layer 2 (output filter) + Layer 5 (input validator)
-    │  4-turn bounded conversation → structured conclusion
-    ↓
-Reply → Patient (immediate)
-    ↓ (background thread)
-[Risk Assessor Agent] ← Claude Sonnet 4.5 (agentic loop, max 6 iterations)
-    │  Tools: get_symptom_trend, get_vital_trend, check_med_context,
-    │         get_time_since_last, flag_investigation_gap, write_risk_alert
-    │  Guardrails: Layer 3 (hallucination detector) + Layer 4 (score sanity)
-    ↓
-[Escalator Agent] ← Claude Haiku 4.5 (cost-optimized)
-    │  Score-to-severity mapping: 0-20 skip, 21-40 monitor, 41-60 urgent, 61-80 critical, 81+ 911-now
-    ↓
-[SQLite Database] → Nurse Worklist Dashboard
+
+#### Inter-Agent Feedback Loop
+
+```mermaid
+flowchart LR
+    subgraph TURN_N["Turn N"]
+        RA["Risk Assessor\nfinds unanswered\nclinical question"]
+        DB[("SQLite DB\ninvestigation_gaps\ntable")]
+        RA -- "flag_investigation_gap()\npriority: high" --> DB
+    end
+
+    subgraph TURN_N1["Turn N+1"]
+        CONV["Conversationalist\nreads gaps at\nturn start"]
+        PAT["Patient hears\nnatural follow-up\nquestion"]
+        CONV -- "Weaves gap into\nconversation naturally" --> PAT
+    end
+
+    DB -- "Injected into\nsystem prompt" --> CONV
+
+    style TURN_N fill:#fff3e0,stroke:#FF9800,stroke-width:2px
+    style TURN_N1 fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px
+    style DB fill:#e3f2fd,stroke:#2196F3,stroke-width:2px
 ```
+
+> **Example:** Risk Assessor flags *"Ask about wound drainage character — is it serous or purulent?"* → Conversationalist asks naturally: *"You mentioned some drainage from your incision. Can you describe what it looks like — is it thin and watery, or thicker?"* → The patient never knows two agents are collaborating.
 
 **Key Design Decisions:**
 - **Sonnet for reasoning, Haiku for formatting:** Conversationalist and Risk Assessor require deep clinical reasoning (Sonnet ~$0.003-0.01/call). Escalator only translates scores to alerts (Haiku ~$0.001/call, skipped entirely for scores ≤15).
@@ -109,27 +192,75 @@ Reply → Patient (immediate)
 
 ### 1.2 User Flows
 
+#### Patient Journey — End to End
+
+```mermaid
+flowchart TD
+    A["🏥 Hospital Discharge\nPatient receives RapidAI link"]
+    B["📱 Onboard\nSelect surgery type,\nrecovery day, name"]
+    C["💬 Daily Check-In\nPatient describes how\nthey're feeling"]
+
+    subgraph CONV_FLOW["Conversationalist — 4-Turn Bounded Conversation"]
+        D["Turn 1: Opening\nGreet + first assessment question"]
+        E["Turn 2: Assessment\nFollow-up on symptoms,\nvitals, medications"]
+        F["Turn 3: Assessment\nProbe investigation gaps\nfrom Risk Assessor"]
+        G["Turn 4: Conclusion\nSeverity + Summary +\nGuidance + Next Steps"]
+    end
+
+    subgraph AI_ANALYSIS["Background AI Analysis (async)"]
+        H{"Risk Score?"}
+        I["Score ≤ 20\nRoutine — no alert\nData logged for trends"]
+        J["Score 21-40\nMonitor — nurse notified\nReassess in 24h"]
+        K["Score 41-60\nUrgent — priority alert\nReassess in 4-8h"]
+        L["Score 61+\nCritical / 911-Now\nImmediate escalation"]
+    end
+
+    subgraph NURSE_FLOW["👩‍⚕️ Nurse Workflow"]
+        M["Worklist Dashboard\nAll patients sorted\nby risk score"]
+        N["Patient Detail View\nSymptoms • Vitals • Meds\nRisk Timeline • Alerts"]
+        O["Clinical Decision\nCall patient, adjust meds,\nor schedule visit"]
+    end
+
+    P["✅ Recovery Complete\nSession summary stored\nin patient_history"]
+
+    A --> B --> C --> D
+    D --> E --> F --> G
+    G --> P
+
+    E -- "after each turn" --> H
+    H -- "≤ 20" --> I
+    H -- "21-40" --> J
+    H -- "41-60" --> K
+    H -- "61+" --> L
+
+    J & K & L --> M --> N --> O
+
+    style A fill:#e3f2fd,stroke:#1565C0,stroke-width:2px
+    style CONV_FLOW fill:#e8f5e9,stroke:#2E7D32,stroke-width:2px
+    style AI_ANALYSIS fill:#fff3e0,stroke:#E65100,stroke-width:2px
+    style NURSE_FLOW fill:#f3e5f5,stroke:#6A1B9A,stroke-width:2px
+    style P fill:#e0f2f1,stroke:#00695C,stroke-width:2px
+    style L fill:#ffcdd2,stroke:#c62828,stroke-width:2px
 ```
-[Hospital Discharge]
-    ↓
-[Onboard to RapidAI app → Select scenario (surgery type, recovery day)]
-    ↓
-[Daily check-in: Conversationalist asks about symptoms, vitals, meds]
-    ↓
-[AI analyzes → Normal? → Reassure + education, log data]
-                       ↳ [Concerning? → Risk Assessor investigates in background]
-                           ↳ [Score > 20 → Escalator generates nurse alert]
-                           ↳ [Score ≤ 20 → Routine, no alert]
-    ↓
-[Nurse reviews worklist dashboard → sorted by risk score (highest first)]
-    ↓
-[Patient detail view: symptoms, vitals, meds, risk timeline, alerts]
-    ↓
-[Telehealth session if needed — out of scope for MVP]
-    ↓
-[Turn 4: Conversationalist delivers conclusion with severity, summary, guidance, next steps]
-    ↓
-[Recovery complete → session summary stored in patient_history]
+
+#### Emergency Path — Zero-Latency Bypass
+
+```mermaid
+flowchart LR
+    A["Patient types:\n'I can't breathe'\n'chest pain'\n'bleeding won't stop'"]
+    B["🛡️ Emergency Bypass\n23 regex patterns\nruns BEFORE any agent"]
+    C["🚨 911-Now Alert\ncreated instantly"]
+    D["Patient sees:\n'Call 911 immediately.\nClinical team alerted.'"]
+    E["Nurse Dashboard:\nurgent banner with\nsignals + actions"]
+
+    A --> B --> C
+    C --> D
+    C --> E
+
+    style B fill:#ffebee,stroke:#c62828,stroke-width:3px
+    style C fill:#f44336,color:#fff,stroke:#b71c1c,stroke-width:3px
+    style D fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style E fill:#fff9c4,stroke:#f57f17,stroke-width:2px
 ```
 
 ### 1.3 Guardrail Architecture (5 Layers)
@@ -278,10 +409,28 @@ Every time RapidAI sends an alert or risk score, it transparently "shows its wor
 
 ### 3.1 Breaking the Agentic Workflow into Components
 
-```
-[Patient Input] → [Emergency Bypass] → [Conversationalist Agent] → [Risk Assessor Agent] → [Escalator Agent] → [Nurse Dashboard]
-                        ↑                       ↑                          ↑                        ↑
-                   L1 Guardrail           L2+L5 Guardrails           L3+L4 Guardrails         Score Mapping
+```mermaid
+flowchart LR
+    A["Patient\nInput"] --> B["Emergency\nBypass"]
+    B --> C["Conversationalist\nAgent"]
+    C --> D["Risk Assessor\nAgent"]
+    D --> E["Escalator\nAgent"]
+    E --> F["Nurse\nDashboard"]
+
+    B -.-> G["L1 Guardrail"]
+    C -.-> H["L2 + L5\nGuardrails"]
+    D -.-> I["L3 + L4\nGuardrails"]
+    E -.-> J["Score\nMapping"]
+
+    style B fill:#ffebee,stroke:#f44336
+    style C fill:#e8f5e9,stroke:#4CAF50
+    style D fill:#fff3e0,stroke:#FF9800
+    style E fill:#f3e5f5,stroke:#9C27B0
+    style F fill:#e0f2f1,stroke:#009688
+    style G fill:#fce4ec,stroke:#e91e63,stroke-dasharray: 5 5
+    style H fill:#fce4ec,stroke:#e91e63,stroke-dasharray: 5 5
+    style I fill:#fce4ec,stroke:#e91e63,stroke-dasharray: 5 5
+    style J fill:#fce4ec,stroke:#e91e63,stroke-dasharray: 5 5
 ```
 
 ### 3.2 Component-Level Risk Assessment
@@ -368,7 +517,7 @@ Every time RapidAI sends an alert or risk score, it transparently "shows its wor
   - `knee_day7_infection` (Maria) → Expected: High risk, pain reversal + fever on NSAIDs. Tests medication masking detection.
   - `hip_day4_dvt` (Robert) → Expected: Urgent, unilateral leg swelling. Tests DVT detection.
   - `appendix_day5_abscess` (Taylor) → Expected: High risk, improving-then-worsening pattern. Tests abscess window detection.
-- Red flag matrix (27 signals) provides objective ground truth for signal detection
+- Red flag matrix (21 signals) provides objective ground truth for signal detection
 - Guardrail catch rates provide continuous quality measurement
 
 **Evaluation Plan:**
@@ -382,7 +531,7 @@ Every time RapidAI sends an alert or risk score, it transparently "shows its wor
 | Dimension | Eval Criteria | How We Measure | Current Status |
 |---|---|---|---|
 | **Helpful** | Does the AI collect relevant clinical data? | Tool call coverage: % of relevant symptoms/vitals logged per scenario | Tested across 7 scenarios |
-| **Helpful** | Does Risk Assessor detect known complications? | Signal detection rate against red flag ground truth | 27 signals mapped |
+| **Helpful** | Does Risk Assessor detect known complications? | Signal detection rate against red flag ground truth | 21 signals mapped |
 | **Helpful** | Are nurse alerts actionable? | Escalator output includes actions, timeline, rationale | Validated in test suite |
 | **Honest** | Does the AI avoid making up symptoms? | Layer 3 hallucination detector catch rate | Automated per assessment |
 | **Honest** | Are risk scores consistent with evidence? | Layer 4 sanity check adjustment rate | Automated per assessment |

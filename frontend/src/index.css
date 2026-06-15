@@ -1,0 +1,21 @@
+@import "tailwindcss";
+
+@theme {
+  --color-triage: #0f766e;
+  --color-triage-light: #ccfbf1;
+  --color-triage-dark: #064e3b;
+}
+
+body {
+  margin: 0;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 2px;
+}

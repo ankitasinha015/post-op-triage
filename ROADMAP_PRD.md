@@ -82,16 +82,17 @@ RapidAI uses a **multi-agent orchestration** architecture with three specialized
 #### Multi-Agent Pipeline
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryColor': '#4a90d9', 'primaryTextColor': '#000000', 'lineColor': '#555555', 'background': '#ffffff', 'mainBkg': '#ffffff', 'nodeBorder': '#333333', 'clusterBkg': '#f5f5f5', 'clusterBorder': '#999999', 'edgeLabelBackground': '#ffffff'}}}%%
 flowchart TD
-    subgraph INPUT["📱 Patient Input"]
+    subgraph INPUT["📱 PATIENT INPUT"]
         A["Patient sends message\n(natural language)"]
     end
 
-    subgraph SAFETY["🛡️ Layer 1 — Emergency Bypass"]
+    subgraph SAFETY["🛡️ LAYER 1 — EMERGENCY BYPASS"]
         B{"23 regex patterns\n(chest pain, can't breathe,\nseizure, suicide, etc.)"}
     end
 
-    subgraph CONV["🤖 Conversationalist Agent — Claude Sonnet 4.5"]
+    subgraph CONV["🤖 CONVERSATIONALIST — Claude Sonnet 4.5"]
         direction TB
         C["System Prompt\n+ Surgery Knowledge\n+ Med Context\n+ Investigation Gaps"]
         C --> D["Tool-Use Loop (max 4 turns)"]
@@ -101,12 +102,12 @@ flowchart TD
         D --> H["ask_clarifying\n(question, priority)"]
     end
 
-    subgraph GUARD_CONV["🛡️ Guardrails"]
+    subgraph GUARD_CONV["🛡️ GUARDRAILS"]
         I["L2: Output Filter\n60+ patterns block\ndiagnosis & prescription"]
         J["L5: Input Validator\nseverity 0-10, type enums,\nSQL injection prevention"]
     end
 
-    subgraph RISK["🔬 Risk Assessor Agent — Claude Sonnet 4.5"]
+    subgraph RISK["🔬 RISK ASSESSOR — Claude Sonnet 4.5"]
         direction TB
         K["Agentic Investigation Loop\n(max 6 iterations)"]
         K --> L["get_symptom_trend"]
@@ -117,12 +118,12 @@ flowchart TD
         K --> Q["write_risk_alert\n(score, signals, reasoning)"]
     end
 
-    subgraph GUARD_RISK["🛡️ Guardrails"]
+    subgraph GUARD_RISK["🛡️ GUARDRAILS"]
         R["L3: Hallucination Detector\nsignal-to-evidence mapping"]
         S["L4: Score Sanity Check\nfloor/ceiling enforcement"]
     end
 
-    subgraph ESC["⚡ Escalator Agent — Claude Haiku 4.5"]
+    subgraph ESC["⚡ ESCALATOR — Claude Haiku 4.5"]
         T["Score-to-Severity Mapping"]
         T --> U["0-20: Skip"]
         T --> V["21-40: Monitor"]
@@ -131,8 +132,8 @@ flowchart TD
         T --> Y["81+: 911-Now"]
     end
 
-    subgraph OUTPUT["📊 Outputs"]
-        Z["Patient gets\nimmediate reply\n(< 3 sec)"]
+    subgraph OUTPUT["📊 OUTPUTS"]
+        Z["Patient gets\nimmediate reply\n< 3 sec"]
         AA["Nurse Dashboard\nworklist sorted\nby risk score"]
         BB["911 Alert\nimmediate\nescalation"]
     end
@@ -149,25 +150,53 @@ flowchart TD
     S --> T
     T --> AA
 
-    style INPUT fill:#e8f4fd,stroke:#2196F3,stroke-width:2px
-    style SAFETY fill:#ffebee,stroke:#f44336,stroke-width:2px
-    style CONV fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px
-    style RISK fill:#fff3e0,stroke:#FF9800,stroke-width:2px
-    style ESC fill:#f3e5f5,stroke:#9C27B0,stroke-width:2px
-    style OUTPUT fill:#e0f2f1,stroke:#009688,stroke-width:2px
-    style GUARD_CONV fill:#fce4ec,stroke:#e91e63,stroke-width:1px,stroke-dasharray: 5 5
-    style GUARD_RISK fill:#fce4ec,stroke:#e91e63,stroke-width:1px,stroke-dasharray: 5 5
-    style BB fill:#f44336,color:#fff,stroke:#b71c1c,stroke-width:3px
+    style INPUT fill:#d6eaf8,stroke:#2471a3,stroke-width:2px,color:#000
+    style SAFETY fill:#f9e0e0,stroke:#c0392b,stroke-width:2px,color:#000
+    style CONV fill:#d5f5e3,stroke:#1e8449,stroke-width:2px,color:#000
+    style RISK fill:#fdebd0,stroke:#d68910,stroke-width:2px,color:#000
+    style ESC fill:#e8daef,stroke:#7d3c98,stroke-width:2px,color:#000
+    style OUTPUT fill:#d1f2eb,stroke:#148f77,stroke-width:2px,color:#000
+    style GUARD_CONV fill:#fdedec,stroke:#cb4335,stroke-width:1px,stroke-dasharray: 5 5,color:#000
+    style GUARD_RISK fill:#fdedec,stroke:#cb4335,stroke-width:1px,stroke-dasharray: 5 5,color:#000
+    style BB fill:#e74c3c,color:#ffffff,stroke:#922b21,stroke-width:3px
+    style A fill:#d6eaf8,stroke:#2471a3,color:#000
+    style B fill:#f9e0e0,stroke:#c0392b,color:#000
+    style C fill:#d5f5e3,stroke:#1e8449,color:#000
+    style D fill:#d5f5e3,stroke:#1e8449,color:#000
+    style E fill:#d5f5e3,stroke:#1e8449,color:#000
+    style F fill:#d5f5e3,stroke:#1e8449,color:#000
+    style G fill:#d5f5e3,stroke:#1e8449,color:#000
+    style H fill:#d5f5e3,stroke:#1e8449,color:#000
+    style I fill:#fdedec,stroke:#cb4335,color:#000
+    style J fill:#fdedec,stroke:#cb4335,color:#000
+    style K fill:#fdebd0,stroke:#d68910,color:#000
+    style L fill:#fdebd0,stroke:#d68910,color:#000
+    style M fill:#fdebd0,stroke:#d68910,color:#000
+    style N fill:#fdebd0,stroke:#d68910,color:#000
+    style O fill:#fdebd0,stroke:#d68910,color:#000
+    style P fill:#fdebd0,stroke:#d68910,color:#000
+    style Q fill:#fdebd0,stroke:#d68910,color:#000
+    style R fill:#fdedec,stroke:#cb4335,color:#000
+    style S fill:#fdedec,stroke:#cb4335,color:#000
+    style T fill:#e8daef,stroke:#7d3c98,color:#000
+    style U fill:#e8daef,stroke:#7d3c98,color:#000
+    style V fill:#e8daef,stroke:#7d3c98,color:#000
+    style W fill:#e8daef,stroke:#7d3c98,color:#000
+    style X fill:#e8daef,stroke:#7d3c98,color:#000
+    style Y fill:#e8daef,stroke:#7d3c98,color:#000
+    style Z fill:#d1f2eb,stroke:#148f77,color:#000
+    style AA fill:#d1f2eb,stroke:#148f77,color:#000
 ```
 
 #### Inter-Agent Feedback Loop
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryTextColor': '#000000', 'lineColor': '#555555', 'background': '#ffffff', 'mainBkg': '#ffffff', 'edgeLabelBackground': '#ffffff'}}}%%
 flowchart LR
     subgraph TURN_N["Turn N"]
         RA["Risk Assessor\nfinds unanswered\nclinical question"]
         DB[("SQLite DB\ninvestigation_gaps\ntable")]
-        RA -- "flag_investigation_gap()\npriority: high" --> DB
+        RA -- "flag_investigation_gap\npriority: high" --> DB
     end
 
     subgraph TURN_N1["Turn N+1"]
@@ -178,9 +207,12 @@ flowchart LR
 
     DB -- "Injected into\nsystem prompt" --> CONV
 
-    style TURN_N fill:#fff3e0,stroke:#FF9800,stroke-width:2px
-    style TURN_N1 fill:#e8f5e9,stroke:#4CAF50,stroke-width:2px
-    style DB fill:#e3f2fd,stroke:#2196F3,stroke-width:2px
+    style TURN_N fill:#fdebd0,stroke:#d68910,stroke-width:2px,color:#000
+    style TURN_N1 fill:#d5f5e3,stroke:#1e8449,stroke-width:2px,color:#000
+    style RA fill:#fdebd0,stroke:#d68910,color:#000
+    style DB fill:#d6eaf8,stroke:#2471a3,color:#000
+    style CONV fill:#d5f5e3,stroke:#1e8449,color:#000
+    style PAT fill:#d5f5e3,stroke:#1e8449,color:#000
 ```
 
 > **Example:** Risk Assessor flags *"Ask about wound drainage character — is it serous or purulent?"* → Conversationalist asks naturally: *"You mentioned some drainage from your incision. Can you describe what it looks like — is it thin and watery, or thicker?"* → The patient never knows two agents are collaborating.
@@ -195,19 +227,20 @@ flowchart LR
 #### Patient Journey — End to End
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryTextColor': '#000000', 'lineColor': '#555555', 'background': '#ffffff', 'mainBkg': '#ffffff', 'edgeLabelBackground': '#ffffff'}}}%%
 flowchart TD
     A["🏥 Hospital Discharge\nPatient receives RapidAI link"]
     B["📱 Onboard\nSelect surgery type,\nrecovery day, name"]
     C["💬 Daily Check-In\nPatient describes how\nthey're feeling"]
 
-    subgraph CONV_FLOW["Conversationalist — 4-Turn Bounded Conversation"]
+    subgraph CONV_FLOW["CONVERSATIONALIST — 4-Turn Bounded Conversation"]
         D["Turn 1: Opening\nGreet + first assessment question"]
         E["Turn 2: Assessment\nFollow-up on symptoms,\nvitals, medications"]
         F["Turn 3: Assessment\nProbe investigation gaps\nfrom Risk Assessor"]
         G["Turn 4: Conclusion\nSeverity + Summary +\nGuidance + Next Steps"]
     end
 
-    subgraph AI_ANALYSIS["Background AI Analysis (async)"]
+    subgraph AI_ANALYSIS["BACKGROUND AI ANALYSIS (async)"]
         H{"Risk Score?"}
         I["Score ≤ 20\nRoutine — no alert\nData logged for trends"]
         J["Score 21-40\nMonitor — nurse notified\nReassess in 24h"]
@@ -215,9 +248,9 @@ flowchart TD
         L["Score 61+\nCritical / 911-Now\nImmediate escalation"]
     end
 
-    subgraph NURSE_FLOW["👩‍⚕️ Nurse Workflow"]
+    subgraph NURSE_FLOW["👩‍⚕️ NURSE WORKFLOW"]
         M["Worklist Dashboard\nAll patients sorted\nby risk score"]
-        N["Patient Detail View\nSymptoms • Vitals • Meds\nRisk Timeline • Alerts"]
+        N["Patient Detail View\nSymptoms / Vitals / Meds\nRisk Timeline / Alerts"]
         O["Clinical Decision\nCall patient, adjust meds,\nor schedule visit"]
     end
 
@@ -235,17 +268,31 @@ flowchart TD
 
     J & K & L --> M --> N --> O
 
-    style A fill:#e3f2fd,stroke:#1565C0,stroke-width:2px
-    style CONV_FLOW fill:#e8f5e9,stroke:#2E7D32,stroke-width:2px
-    style AI_ANALYSIS fill:#fff3e0,stroke:#E65100,stroke-width:2px
-    style NURSE_FLOW fill:#f3e5f5,stroke:#6A1B9A,stroke-width:2px
-    style P fill:#e0f2f1,stroke:#00695C,stroke-width:2px
-    style L fill:#ffcdd2,stroke:#c62828,stroke-width:2px
+    style A fill:#d6eaf8,stroke:#2471a3,stroke-width:2px,color:#000
+    style B fill:#d6eaf8,stroke:#2471a3,stroke-width:2px,color:#000
+    style C fill:#d6eaf8,stroke:#2471a3,stroke-width:2px,color:#000
+    style CONV_FLOW fill:#d5f5e3,stroke:#1e8449,stroke-width:2px,color:#000
+    style D fill:#d5f5e3,stroke:#1e8449,color:#000
+    style E fill:#d5f5e3,stroke:#1e8449,color:#000
+    style F fill:#d5f5e3,stroke:#1e8449,color:#000
+    style G fill:#d5f5e3,stroke:#1e8449,color:#000
+    style AI_ANALYSIS fill:#fdebd0,stroke:#d68910,stroke-width:2px,color:#000
+    style H fill:#fdebd0,stroke:#d68910,color:#000
+    style I fill:#fdebd0,stroke:#d68910,color:#000
+    style J fill:#fdebd0,stroke:#d68910,color:#000
+    style K fill:#fdebd0,stroke:#d68910,color:#000
+    style L fill:#f9e0e0,stroke:#c0392b,stroke-width:2px,color:#000
+    style NURSE_FLOW fill:#e8daef,stroke:#7d3c98,stroke-width:2px,color:#000
+    style M fill:#e8daef,stroke:#7d3c98,color:#000
+    style N fill:#e8daef,stroke:#7d3c98,color:#000
+    style O fill:#e8daef,stroke:#7d3c98,color:#000
+    style P fill:#d1f2eb,stroke:#148f77,stroke-width:2px,color:#000
 ```
 
 #### Emergency Path — Zero-Latency Bypass
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryTextColor': '#000000', 'lineColor': '#555555', 'background': '#ffffff', 'mainBkg': '#ffffff', 'edgeLabelBackground': '#ffffff'}}}%%
 flowchart LR
     A["Patient types:\n'I can't breathe'\n'chest pain'\n'bleeding won't stop'"]
     B["🛡️ Emergency Bypass\n23 regex patterns\nruns BEFORE any agent"]
@@ -257,10 +304,11 @@ flowchart LR
     C --> D
     C --> E
 
-    style B fill:#ffebee,stroke:#c62828,stroke-width:3px
-    style C fill:#f44336,color:#fff,stroke:#b71c1c,stroke-width:3px
-    style D fill:#fff9c4,stroke:#f57f17,stroke-width:2px
-    style E fill:#fff9c4,stroke:#f57f17,stroke-width:2px
+    style A fill:#d6eaf8,stroke:#2471a3,stroke-width:2px,color:#000
+    style B fill:#f9e0e0,stroke:#c0392b,stroke-width:3px,color:#000
+    style C fill:#e74c3c,stroke:#922b21,stroke-width:3px,color:#ffffff
+    style D fill:#fef9e7,stroke:#d4ac0d,stroke-width:2px,color:#000
+    style E fill:#fef9e7,stroke:#d4ac0d,stroke-width:2px,color:#000
 ```
 
 ### 1.3 Guardrail Architecture (5 Layers)
@@ -410,6 +458,7 @@ Every time RapidAI sends an alert or risk score, it transparently "shows its wor
 ### 3.1 Breaking the Agentic Workflow into Components
 
 ```mermaid
+%%{init: {'theme': 'base', 'themeVariables': {'primaryTextColor': '#000000', 'lineColor': '#555555', 'background': '#ffffff', 'mainBkg': '#ffffff', 'edgeLabelBackground': '#ffffff'}}}%%
 flowchart LR
     A["Patient\nInput"] --> B["Emergency\nBypass"]
     B --> C["Conversationalist\nAgent"]
@@ -422,15 +471,16 @@ flowchart LR
     D -.-> I["L3 + L4\nGuardrails"]
     E -.-> J["Score\nMapping"]
 
-    style B fill:#ffebee,stroke:#f44336
-    style C fill:#e8f5e9,stroke:#4CAF50
-    style D fill:#fff3e0,stroke:#FF9800
-    style E fill:#f3e5f5,stroke:#9C27B0
-    style F fill:#e0f2f1,stroke:#009688
-    style G fill:#fce4ec,stroke:#e91e63,stroke-dasharray: 5 5
-    style H fill:#fce4ec,stroke:#e91e63,stroke-dasharray: 5 5
-    style I fill:#fce4ec,stroke:#e91e63,stroke-dasharray: 5 5
-    style J fill:#fce4ec,stroke:#e91e63,stroke-dasharray: 5 5
+    style A fill:#d6eaf8,stroke:#2471a3,color:#000
+    style B fill:#f9e0e0,stroke:#c0392b,color:#000
+    style C fill:#d5f5e3,stroke:#1e8449,color:#000
+    style D fill:#fdebd0,stroke:#d68910,color:#000
+    style E fill:#e8daef,stroke:#7d3c98,color:#000
+    style F fill:#d1f2eb,stroke:#148f77,color:#000
+    style G fill:#fdedec,stroke:#cb4335,color:#000,stroke-dasharray: 5 5
+    style H fill:#fdedec,stroke:#cb4335,color:#000,stroke-dasharray: 5 5
+    style I fill:#fdedec,stroke:#cb4335,color:#000,stroke-dasharray: 5 5
+    style J fill:#fdedec,stroke:#cb4335,color:#000,stroke-dasharray: 5 5
 ```
 
 ### 3.2 Component-Level Risk Assessment

@@ -12,6 +12,7 @@ export default function Chat() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [conclusion, setConclusion] = useState(null);
+  const [emergency, setEmergency] = useState(false);
   const [showNewSession, setShowNewSession] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -41,7 +42,7 @@ export default function Chat() {
   };
 
   const handleSend = async () => {
-    if (!input.trim() || sending || !sessionId) return;
+    if (!input.trim() || sending || !sessionId || emergency) return;
     const msg = input.trim();
     setInput('');
     setSending(true);
@@ -51,7 +52,10 @@ export default function Chat() {
     try {
       const res = await api.sendMessage(sessionId, msg);
 
-      if (res.is_conclusion && res.conclusion) {
+      if (res.emergency) {
+        setEmergency(true);
+        setMessages(prev => [...prev, { role: 'assistant', content: res.reply }]);
+      } else if (res.is_conclusion && res.conclusion) {
         setConclusion(res.conclusion);
         setMessages(prev => [...prev, {
           role: 'assistant',
@@ -69,7 +73,7 @@ export default function Chat() {
     }
 
     setSending(false);
-    inputRef.current?.focus();
+    if (!emergency) inputRef.current?.focus();
   };
 
   const patientTurns = messages.filter(m => m.role === 'user').length;
@@ -231,7 +235,16 @@ export default function Chat() {
 
         {/* Input */}
         <div className="bg-white border-t border-slate-200 px-5 py-3">
-          {conclusion ? (
+          {emergency ? (
+            <div className="text-center py-3">
+              <p className="text-sm font-medium text-red-600">
+                Emergency alert sent. Chat is locked.
+              </p>
+              <p className="text-xs text-slate-500 mt-1">
+                If this is a real emergency, call 911 now. A care team member has been notified.
+              </p>
+            </div>
+          ) : conclusion ? (
             <p className="text-sm text-slate-400 text-center py-2">
               This check-in is complete. Start a new session for another check-in.
             </p>

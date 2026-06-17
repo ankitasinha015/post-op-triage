@@ -13,6 +13,7 @@ Layer 5: Tool input validator — sanitizes and rejects bad tool call inputs
 
 import re
 from src import db
+from src.clinical_knowledge import check_symptoms_vs_expected
 
 
 # ──────────────────────────────────────────────
@@ -254,6 +255,7 @@ EMERGENCY_SYMPTOM_NAMES = {
 def check_score_sanity(session_id: str, score: int, triggered_signals: list[str]) -> dict:
     """Validate risk score against the actual data.
     Returns adjustment dict: {adjusted_score, reason, was_adjusted}"""
+    session = db.get_session(session_id)
     symptoms = db.get_symptoms(session_id)
     vitals = db.get_vitals(session_id)
 
@@ -281,6 +283,39 @@ def check_score_sanity(session_id: str, score: int, triggered_signals: list[str]
             "reason": f"Score {score} too high with no reported symptoms or vitals. Capped at 20.",
             "was_adjusted": True,
         }
+
+    # Expected-symptom cap: if all symptoms are within expected ranges for
+    # this surgery+day, the score should not exceed 25. This is the key
+    # guardrail that prevents Day 1 normal inflammatory responses from
+    # being scored as "urgent."
+    if session and symptoms and score > 25 and not has_emergency_symptom and not has_high_fever:
+        comparison = check_symptoms_vs_expected(
+            session["surgery_type"], session["recovery_day"], symptoms
+        )
+        if comparison["all_expected"]:
+            return {
+                "adjusted_score": min(25, score),
+                "reason": (
+                    f"Score {score} too high — all reported symptoms are within expected "
+                    f"ranges for {session['surgery_type']} Day {session['recovery_day']}. "
+                    f"Capped at 25 (normal recovery)."
+                ),
+                "was_adjusted": True,
+            }
+        elif comparison["above_expected"] and not any(
+            item["over_by"] >= 3 for item in comparison["above_expected"]
+        ):
+            cap = 40
+            if score > cap:
+                names = ", ".join(item["name"] for item in comparison["above_expected"])
+                return {
+                    "adjusted_score": cap,
+                    "reason": (
+                        f"Score {score} reduced — symptoms ({names}) are only slightly "
+                        f"above expected for Day {session['recovery_day']}. Capped at {cap}."
+                    ),
+                    "was_adjusted": True,
+                }
 
     # Consistency check: high score with no triggered signals
     if score > 60 and not triggered_signals:
@@ -354,11 +389,14 @@ def validate_tool_input(tool_name: str, tool_input: dict) -> dict:
         if not med_name or not VALID_MED_PATTERN.match(med_name):
             errors.append(f"Invalid medication name: '{med_name}'")
 
-        dose = sanitized.get("dose", "")
+        dose = sanitized.get("dose", "unknown")
         if not dose:
-            errors.append("Missing dose")
+            sanitized["dose"] = "unknown"
         if len(dose) > 100:
             sanitized["dose"] = dose[:100]
+
+        if not sanitized.get("time"):
+            sanitized["time"] = "recently"
 
     elif tool_name == "ask_clarifying":
         question = sanitized.get("question", "")
@@ -398,16 +436,11 @@ def run_guardrails_on_risk_assessment(session_id: str, assessment: dict) -> dict
     hallucinated = check_hallucination(session_id, triggered)
     if hallucinated:
         triggered = [s for s in triggered if s not in hallucinated]
-        reasoning += (
-            f" [GUARDRAIL: Removed {len(hallucinated)} signal(s) not supported by patient data: "
-            f"{', '.join(hallucinated)}]"
-        )
 
     # Layer 4: Score sanity
     sanity = check_score_sanity(session_id, score, triggered)
     if sanity["was_adjusted"]:
         score = sanity["adjusted_score"]
-        reasoning += f" [GUARDRAIL: {sanity['reason']}]"
 
     return {
         "score": score,
@@ -417,5 +450,6 @@ def run_guardrails_on_risk_assessment(session_id: str, assessment: dict) -> dict
             "hallucinated_signals": hallucinated,
             "score_adjusted": sanity["was_adjusted"],
             "original_score": assessment.get("score", 0),
+            "sanity_reason": sanity.get("reason", ""),
         },
     }

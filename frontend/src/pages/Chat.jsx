@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Send, Heart, Check, ArrowLeft, Loader2 } from 'lucide-react';
 import { api } from '../lib/api';
-import { riskColor, initials } from '../lib/utils';
 import NewSessionModal from '../components/NewSessionModal';
 
 export default function Chat() {
@@ -13,8 +12,6 @@ export default function Chat() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const [conclusion, setConclusion] = useState(null);
-  const [symptoms, setSymptoms] = useState([]);
-  const [riskScores, setRiskScores] = useState([]);
   const [showNewSession, setShowNewSession] = useState(false);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -29,16 +26,12 @@ export default function Chat() {
 
   const loadSession = async () => {
     try {
-      const [s, msgs, sym, rs] = await Promise.all([
+      const [s, msgs] = await Promise.all([
         api.getSession(sessionId),
         api.getMessages(sessionId),
-        api.getSymptoms(sessionId),
-        api.getRiskScores(sessionId),
       ]);
       setSession(s);
       setMessages(msgs);
-      setSymptoms(sym);
-      setRiskScores(rs);
 
       const conc = await api.getConclusion(sessionId).catch(() => null);
       setConclusion(conc);
@@ -68,13 +61,6 @@ export default function Chat() {
         setMessages(prev => [...prev, { role: 'assistant', content: res.reply }]);
       }
 
-      // Refresh side panel data
-      const [sym, rs] = await Promise.all([
-        api.getSymptoms(sessionId),
-        api.getRiskScores(sessionId),
-      ]);
-      setSymptoms(sym);
-      setRiskScores(rs);
     } catch (e) {
       setMessages(prev => [...prev, {
         role: 'assistant',
@@ -88,13 +74,31 @@ export default function Chat() {
 
   const patientTurns = messages.filter(m => m.role === 'user').length;
   const totalTurns = 4;
-  const latestScore = riskScores.length > 0 ? riskScores[riskScores.length - 1].score : 0;
-  const risk = riskColor(latestScore);
 
-  // Deduplicate symptoms
-  const uniqueSymptoms = Object.values(
-    symptoms.reduce((acc, s) => { acc[s.name] = s; return acc; }, {})
-  );
+  // Parse JSON conclusion from assistant messages so raw JSON never shows
+  const parseMessageContent = (content) => {
+    if (typeof content !== 'string') return content;
+    const trimmed = content.trim();
+    // Detect raw JSON or markdown-wrapped JSON
+    let jsonStr = trimmed;
+    if (trimmed.startsWith('```')) {
+      jsonStr = trimmed.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '');
+    }
+    if (jsonStr.startsWith('{') && jsonStr.includes('"conclusion"')) {
+      try {
+        const parsed = JSON.parse(jsonStr);
+        if (parsed.conclusion) {
+          if (!conclusion) setConclusion(parsed);
+          const parts = [];
+          if (parsed.summary) parts.push(parsed.summary);
+          if (parsed.guidance) parts.push(parsed.guidance);
+          if (parsed.next_step) parts.push(`Next step: ${parsed.next_step}`);
+          return parts.join('\n\n') || content;
+        }
+      } catch {}
+    }
+    return content;
+  };
 
   if (!sessionId) {
     return (
@@ -128,7 +132,7 @@ export default function Chat() {
         <div className="bg-teal-700 text-white px-5 py-4">
           <div className="flex items-center gap-3 mb-3">
             <button
-              onClick={() => navigate('/dashboard')}
+              onClick={() => navigate('/chat')}
               className="p-1 rounded hover:bg-teal-600 transition-colors"
             >
               <ArrowLeft className="w-4 h-4" />
@@ -171,13 +175,13 @@ export default function Chat() {
                   </div>
                 )}
                 <div
-                  className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed ${
+                  className={`max-w-[80%] px-4 py-3 text-sm leading-relaxed whitespace-pre-line ${
                     m.role === 'user'
                       ? 'bg-teal-100 text-teal-900 rounded-2xl rounded-tr-sm'
                       : 'bg-white border border-slate-200 text-slate-700 rounded-2xl rounded-tl-sm'
                   }`}
                 >
-                  {m.content}
+                  {m.role === 'assistant' ? parseMessageContent(m.content) : m.content}
                 </div>
               </div>
             ))}
@@ -212,16 +216,10 @@ export default function Chat() {
                 )}
                 <div className="flex gap-2 mt-3">
                   <button
-                    onClick={() => navigate(`/patient/${sessionId}`)}
+                    onClick={() => { setShowNewSession(true); }}
                     className="text-xs px-3 py-1.5 bg-teal-600 text-white rounded-lg hover:bg-teal-700"
                   >
-                    View clinical detail
-                  </button>
-                  <button
-                    onClick={() => navigate('/dashboard')}
-                    className="text-xs px-3 py-1.5 border border-slate-200 rounded-lg hover:bg-slate-50 text-slate-600"
-                  >
-                    Back to dashboard
+                    Start new check-in
                   </button>
                 </div>
               </div>
@@ -266,61 +264,6 @@ export default function Chat() {
         </div>
       </div>
 
-      {/* Clinical sidebar */}
-      <div className="w-60 bg-white border-l border-slate-200 p-4 overflow-y-auto hidden lg:block">
-        <h3 className="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Clinical data</h3>
-
-        {/* Symptoms */}
-        <div className="mb-4">
-          <p className="text-[11px] text-slate-400 mb-2">Symptoms</p>
-          {uniqueSymptoms.length > 0 ? (
-            <div className="flex flex-col gap-1.5">
-              {uniqueSymptoms.map((s, i) => {
-                const color = s.severity >= 7 ? '#ef4444' : s.severity >= 4 ? '#f59e0b' : '#10b981';
-                return (
-                  <div key={i} className="flex items-center gap-2 text-xs">
-                    <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
-                    <span className="text-slate-600 flex-1">{s.name.replaceAll('_', ' ')}</span>
-                    <span className="font-medium" style={{ color }}>{s.severity}/10</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-xs text-slate-400">None yet</p>
-          )}
-        </div>
-
-        {/* Risk score */}
-        <div className="mb-4">
-          <p className="text-[11px] text-slate-400 mb-2">Risk score</p>
-          {riskScores.length > 0 ? (
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-3xl font-semibold" style={{ color: risk.border }}>{latestScore}</span>
-              <span className="text-xs text-slate-400">/100</span>
-            </div>
-          ) : (
-            <p className="text-xs text-slate-400">Awaiting assessment</p>
-          )}
-        </div>
-
-        {/* Pipeline status */}
-        <div>
-          <p className="text-[11px] text-slate-400 mb-2">Pipeline</p>
-          <div className="flex flex-col gap-1.5">
-            {[
-              { name: 'Conversationalist', done: messages.length > 0 },
-              { name: 'Risk assessor', done: riskScores.length > 0 },
-              { name: 'Escalator', done: false },
-            ].map(p => (
-              <div key={p.name} className="flex items-center gap-2 text-xs">
-                <Check className={`w-3 h-3 ${p.done ? 'text-emerald-500' : 'text-slate-300'}`} />
-                <span className={p.done ? 'text-slate-600' : 'text-slate-400'}>{p.name}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

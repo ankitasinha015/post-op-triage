@@ -1,12 +1,20 @@
-import { NavLink, Outlet } from 'react-router-dom';
-import { LayoutDashboard, MessageCircle, Heart, Bell, Settings } from 'lucide-react';
-
-const navItems = [
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/chat', icon: MessageCircle, label: 'Chat' },
-];
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { LayoutDashboard, MessageCircle, Heart, Stethoscope } from 'lucide-react';
 
 export default function Layout() {
+  const location = useLocation();
+  const isNurseView = location.pathname.startsWith('/dashboard') || location.pathname.startsWith('/patient');
+
+  const navItems = isNurseView
+    ? [
+        { to: '/dashboard', icon: LayoutDashboard, label: 'Worklist' },
+        { to: '/chat', icon: MessageCircle, label: 'Patient Chat' },
+      ]
+    : [
+        { to: '/chat', icon: MessageCircle, label: 'Chat' },
+        { to: '/dashboard', icon: Stethoscope, label: 'Nurse Dashboard' },
+      ];
+
   return (
     <div className="flex h-screen bg-slate-50">
       {/* Sidebar */}
@@ -31,15 +39,6 @@ export default function Layout() {
             <Icon className="w-5 h-5" />
           </NavLink>
         ))}
-
-        <div className="mt-auto">
-          <button
-            className="w-10 h-10 rounded-xl flex items-center justify-center text-slate-400 hover:bg-slate-50 hover:text-slate-600 transition-colors"
-            title="Settings"
-          >
-            <Settings className="w-5 h-5" />
-          </button>
-        </div>
       </aside>
 
       {/* Main content */}

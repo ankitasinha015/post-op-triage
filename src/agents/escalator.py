@@ -29,12 +29,52 @@ RISK ASSESSMENT (from automated clinical analysis):
 
 {investigation_gaps}
 
-SEVERITY GUIDE:
-- routine (0-20): Normal recovery. Brief reassurance note.
-- monitor (21-40): Worth watching. Note what to monitor and when to re-check.
-- urgent (41-60): Nurse should assess soon. Specific exam points + timeline.
-- critical (61-80): Nurse should assess NOW. Concrete actions in priority order.
-- 911-now (81-100): Potential emergency. Immediate actions + who to call.
+SEVERITY GUIDE AND STANDARD CTAs:
+
+routine (0-20) — Normal recovery, no concerns.
+  Standard actions:
+  - Continue routine post-op monitoring per protocol
+  - Encourage ambulation and incentive spirometry
+  - Reassess at next scheduled check-in
+  Reassess in: next shift or next scheduled check-in
+
+monitor (21-40) — One or two mild concerns worth watching.
+  Standard actions:
+  - Document the specific finding(s) in the chart
+  - Increase monitoring frequency for the flagged symptom(s)
+  - Educate patient on what to watch for and when to call
+  - Check vitals (temp, HR, BP) if not done recently
+  Reassess in: 4-8 hours
+
+urgent (41-60) — Clear deviation from expected recovery. Nurse should assess soon.
+  Standard actions:
+  - Perform focused physical assessment of the concerning area
+  - Take a full set of vitals (temp, HR, BP, SpO2, RR)
+  - Notify the attending provider with SBAR report
+  - Document findings and provider response
+  - Prepare for possible orders (labs, imaging)
+  Reassess in: 1-2 hours
+
+critical (61-80) — Dangerous pattern. Nurse should assess NOW.
+  Standard actions:
+  - Assess patient immediately — do not wait
+  - Call attending surgeon or on-call provider NOW with SBAR
+  - Take full vitals + continuous monitoring if available
+  - Prepare for possible rapid response or transfer
+  - Stay with patient until provider responds
+  Reassess in: 30 minutes or until provider sees patient
+
+911-now (81-100) — Potential life-threatening emergency.
+  Standard actions:
+  - Call 911 / activate rapid response team immediately
+  - Stay with patient, maintain airway
+  - Call attending surgeon stat
+  - Prepare crash cart / emergency equipment
+  - Have another nurse bring patient's chart and med list
+  Reassess in: continuously until emergency team arrives
+
+Use the standard CTAs as a BASE, then CUSTOMIZE actions to the specific clinical signals. \
+Replace generic actions with signal-specific ones when you can be more helpful.
 
 OUTPUT FORMAT (respond with ONLY this JSON):
 {{
@@ -46,11 +86,12 @@ OUTPUT FORMAT (respond with ONLY this JSON):
 }}
 
 RULES:
-- Be SPECIFIC. "Check wound" is useless. "Inspect knee incision for erythema, warmth, drainage" is useful.
+- Be SPECIFIC. "Check wound" is useless. "Inspect knee incision for erythema extending beyond 2cm, warmth, purulent drainage" is useful.
 - Match urgency to score. Don't escalate routine findings or downplay urgent ones.
 - Include the "reassess_in" window — the nurse needs to know WHEN to check back.
 - If investigation gaps are flagged, incorporate them into the actions.
-- For routine scores, keep it brief and reassuring."""
+- For routine scores, keep it brief and reassuring.
+- Always include at least 2 actions, even for routine."""
 
 # Score-to-severity mapping
 _SEVERITY_MAP = [
@@ -91,7 +132,11 @@ def escalate(client: anthropic.Anthropic, session_id: str, assessment: dict) -> 
         alert = {
             "severity": "routine",
             "headline": "Recovery progressing normally. No concerns identified.",
-            "actions": ["Continue routine monitoring"],
+            "actions": [
+                "Continue routine post-op monitoring per protocol",
+                "Encourage ambulation and incentive spirometry",
+                "Reassess at next scheduled check-in",
+            ],
             "reassess_in": "next shift",
             "rationale": f"Risk score {score}/100 — all findings within expected range for "
                          f"{session['surgery_type']} Day {session['recovery_day']}.",

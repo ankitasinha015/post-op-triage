@@ -37,9 +37,11 @@ TOOL_DEFINITIONS = [
     {
         "name": "log_vital",
         "description": (
-            "Log a vital sign measurement the patient reported or took. "
-            "Use when the patient mentions temperature, heart rate, blood pressure, "
-            "respiratory rate, or oxygen saturation."
+            "Log a vital sign measurement the patient reported. "
+            "ONLY use this when the patient gives you a SPECIFIC NUMBER — e.g. 'my temp is 99.2' or "
+            "'my heart rate was 88'. Do NOT log vitals based on vague descriptions like 'I feel warm' "
+            "or 'I think I had a fever' — those are symptoms, not vital measurements. "
+            "Do NOT invent or estimate vital values."
         ),
         "input_schema": {
             "type": "object",
@@ -65,7 +67,9 @@ TOOL_DEFINITIONS = [
         "name": "log_med_taken",
         "description": (
             "Log a medication the patient has taken. Use when the patient mentions "
-            "taking a pill, injection, or any prescribed/OTC medication."
+            "taking a pill, injection, or any prescribed/OTC medication. "
+            "You MUST call this whenever the patient mentions taking any medication, "
+            "even if they don't specify the exact dose or time — use 'unknown' for missing details."
         ),
         "input_schema": {
             "type": "object",
@@ -76,14 +80,14 @@ TOOL_DEFINITIONS = [
                 },
                 "dose": {
                     "type": "string",
-                    "description": "Dose taken, e.g. '400mg', '5mg', '2 tablets'",
+                    "description": "Dose taken, e.g. '400mg', '5mg', '2 tablets'. Use 'unknown' if patient didn't specify.",
                 },
                 "time": {
                     "type": "string",
-                    "description": "When the medication was taken, e.g. '2 hours ago', '8:00 AM', 'this morning'",
+                    "description": "When the medication was taken, e.g. '2 hours ago', '8:00 AM', 'this morning'. Use 'recently' if patient didn't specify.",
                 },
             },
-            "required": ["med_name", "dose", "time"],
+            "required": ["med_name"],
         },
     },
     {
@@ -129,13 +133,15 @@ def execute_tool(session_id: str, tool_name: str, tool_input: dict) -> str:
             return f"Logged vital '{tool_input['type']}': {tool_input['value']} {tool_input['unit']}. Record ID: {row_id}"
 
         elif tool_name == "log_med_taken":
+            dose = tool_input.get("dose", "unknown")
+            taken_at = tool_input.get("time", "recently")
             row_id = db.log_med_taken(
                 session_id=session_id,
                 med_name=tool_input["med_name"],
-                dose=tool_input["dose"],
-                taken_at=tool_input["time"],
+                dose=dose,
+                taken_at=taken_at,
             )
-            return f"Logged medication '{tool_input['med_name']}' ({tool_input['dose']}) taken at {tool_input['time']}. Record ID: {row_id}"
+            return f"Logged medication '{tool_input['med_name']}' ({dose}) taken at {taken_at}. Record ID: {row_id}"
 
         elif tool_name == "ask_clarifying":
             return f"Clarifying question noted: {tool_input['question']}"

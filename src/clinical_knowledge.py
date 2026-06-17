@@ -172,6 +172,85 @@ VITAL_RANGES = {
 }
 
 
+EXPECTED_SYMPTOM_RANGES = {
+    "Total Knee Replacement": {
+        1: {"pain": (7, 9), "swelling": (4, 7), "redness": (3, 6), "warmth": (3, 6), "bruising": (3, 7)},
+        2: {"pain": (5, 8), "swelling": (4, 7), "redness": (3, 5), "warmth": (3, 5), "bruising": (3, 7)},
+        3: {"pain": (5, 7), "swelling": (3, 6), "redness": (2, 5), "warmth": (2, 5), "bruising": (3, 6)},
+        5: {"pain": (4, 6), "swelling": (2, 5), "redness": (1, 3), "warmth": (1, 3)},
+        7: {"pain": (3, 5), "swelling": (2, 4), "redness": (0, 2), "warmth": (0, 2)},
+    },
+    "Total Hip Replacement": {
+        1: {"pain": (6, 8), "swelling": (3, 6), "redness": (3, 5), "warmth": (3, 5), "bruising": (3, 7)},
+        2: {"pain": (4, 7), "swelling": (3, 6), "redness": (2, 5), "warmth": (2, 5), "bruising": (3, 7)},
+        3: {"pain": (4, 6), "swelling": (2, 5), "redness": (2, 4), "warmth": (2, 4)},
+        5: {"pain": (3, 5), "swelling": (2, 4), "redness": (1, 3), "warmth": (1, 3)},
+        7: {"pain": (2, 4), "swelling": (1, 3), "redness": (0, 2), "warmth": (0, 2)},
+    },
+    "Laparoscopic Appendectomy": {
+        1: {"pain": (4, 6), "redness": (2, 5), "warmth": (2, 5), "swelling": (2, 4), "drainage": (1, 4), "nausea": (2, 5)},
+        2: {"pain": (3, 5), "redness": (2, 4), "warmth": (2, 4), "swelling": (1, 3), "drainage": (1, 3), "nausea": (1, 3)},
+        3: {"pain": (2, 4), "redness": (1, 3), "warmth": (1, 3), "swelling": (1, 2)},
+        5: {"pain": (1, 3), "redness": (0, 2), "warmth": (0, 2)},
+        7: {"pain": (0, 2), "redness": (0, 1)},
+    },
+}
+
+
+def get_expected_ranges(surgery_type: str, recovery_day: int) -> dict[str, tuple[int, int]]:
+    """Get expected symptom severity ranges for this surgery type and recovery day.
+    Returns dict of {symptom_name: (expected_low, expected_high)}.
+    Uses the closest earlier day if exact day not defined."""
+    surgery_ranges = EXPECTED_SYMPTOM_RANGES.get(surgery_type, {})
+    if not surgery_ranges:
+        return {}
+
+    available_days = sorted(surgery_ranges.keys())
+    best_day = available_days[0]
+    for d in available_days:
+        if d <= recovery_day:
+            best_day = d
+        else:
+            break
+    return surgery_ranges.get(best_day, {})
+
+
+def check_symptoms_vs_expected(
+    surgery_type: str, recovery_day: int, symptoms: list[dict]
+) -> dict:
+    """Compare reported symptoms against expected ranges.
+    Returns {all_expected: bool, above_expected: [...], within_expected: [...]}"""
+    expected = get_expected_ranges(surgery_type, recovery_day)
+    if not expected:
+        return {"all_expected": False, "above_expected": [], "within_expected": [], "unknown": []}
+
+    above = []
+    within = []
+    unknown = []
+
+    for s in symptoms:
+        name = s["name"].lower().replace(" ", "_")
+        severity = s.get("severity", 0)
+
+        matched_key = None
+        for key in expected:
+            if key in name or name in key:
+                matched_key = key
+                break
+
+        if matched_key:
+            low, high = expected[matched_key]
+            if severity <= high:
+                within.append({"name": name, "severity": severity, "expected_high": high})
+            else:
+                above.append({"name": name, "severity": severity, "expected_high": high, "over_by": severity - high})
+        else:
+            unknown.append({"name": name, "severity": severity})
+
+    all_expected = len(above) == 0 and len(unknown) == 0
+    return {"all_expected": all_expected, "above_expected": above, "within_expected": within, "unknown": unknown}
+
+
 def get_surgery_knowledge(surgery_type: str) -> str:
     """Get clinical knowledge relevant to this surgery type."""
     info = RECOVERY_TIMELINES.get(surgery_type)

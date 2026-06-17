@@ -181,22 +181,55 @@ export default function PatientDetail() {
         </div>
       </div>
 
-      {/* Alert banner */}
-      {alerts.length > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 mb-6">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-4 h-4 text-red-600 mt-0.5 shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-red-700">
-                {alerts[alerts.length - 1].severity.toUpperCase()}: {alerts[alerts.length - 1].summary}
-              </p>
-              {alerts[alerts.length - 1].recommended_action && (
-                <p className="text-xs text-red-600 mt-1">{alerts[alerts.length - 1].recommended_action}</p>
-              )}
+      {/* Nurse Action Card */}
+      {alerts.length > 0 && (() => {
+        const latest = alerts[alerts.length - 1];
+        const sev = latest.severity || 'monitor';
+        const sevStyles = {
+          'routine':  { bg: 'bg-emerald-50 border-emerald-200', icon: 'text-emerald-600', title: 'text-emerald-800', text: 'text-emerald-700' },
+          'monitor':  { bg: 'bg-amber-50 border-amber-200', icon: 'text-amber-600', title: 'text-amber-800', text: 'text-amber-700' },
+          'urgent':   { bg: 'bg-orange-50 border-orange-200', icon: 'text-orange-600', title: 'text-orange-800', text: 'text-orange-700' },
+          'critical': { bg: 'bg-red-50 border-red-200', icon: 'text-red-600', title: 'text-red-800', text: 'text-red-700' },
+          '911-now':  { bg: 'bg-red-100 border-red-300', icon: 'text-red-700', title: 'text-red-900', text: 'text-red-800' },
+        };
+        const s = sevStyles[sev] || sevStyles['monitor'];
+        const actions = latest.recommended_action ? latest.recommended_action.split('; ') : [];
+        const SevIcon = sev === 'routine' ? Check : AlertTriangle;
+        return (
+          <div className={`${s.bg} border rounded-xl px-5 py-4 mb-6`}>
+            <div className="flex items-start gap-3">
+              <SevIcon className={`w-5 h-5 ${s.icon} mt-0.5 shrink-0`} />
+              <div className="flex-1">
+                <p className={`text-sm font-semibold ${s.title} uppercase tracking-wide`}>
+                  {sev === '911-now' ? 'EMERGENCY' : sev.toUpperCase()} — {latest.summary}
+                </p>
+
+                {actions.length > 0 && (
+                  <div className="mt-3">
+                    <p className={`text-xs font-medium ${s.text} uppercase tracking-wide mb-2`}>
+                      Recommended Actions
+                    </p>
+                    <ul className="flex flex-col gap-1.5">
+                      {actions.map((action, i) => (
+                        <li key={i} className={`flex items-start gap-2 text-sm ${s.text}`}>
+                          <span className="font-semibold shrink-0">{i + 1}.</span>
+                          <span>{action}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {riskScores.length > 0 && riskScores[riskScores.length - 1].reasoning && (
+                  <p className={`text-xs ${s.text} mt-3 opacity-80`}>
+                    AI Rationale: {riskScores[riskScores.length - 1].reasoning}
+                  </p>
+                )}
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Two column layout */}
       <div className="grid grid-cols-2 gap-4">
@@ -254,12 +287,16 @@ export default function PatientDetail() {
             <>
               <div className="border-t border-slate-100 pt-3 mt-3">
                 <p className="text-xs text-slate-500 uppercase tracking-wide mb-2">Medications</p>
-                {meds.map((m, i) => (
-                  <div key={i} className="flex items-center justify-between text-sm">
-                    <span>{m.med_name} {m.dose}</span>
-                    <span className="text-xs text-slate-400">{m.taken_at}</span>
-                  </div>
-                ))}
+                {meds.map((m, i) => {
+                  const dose = m.dose && m.dose !== 'unknown' ? m.dose : '';
+                  const time = m.taken_at && m.taken_at !== 'recently' ? m.taken_at : '';
+                  return (
+                    <div key={i} className="flex items-center justify-between text-sm mb-1">
+                      <span className="font-medium">{m.med_name}{dose ? ` · ${dose}` : ''}</span>
+                      <span className="text-xs text-slate-400">{time || 'recently'}</span>
+                    </div>
+                  );
+                })}
               </div>
             </>
           )}

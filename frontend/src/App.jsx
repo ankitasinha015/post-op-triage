@@ -9,7 +9,7 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<Layout />}>
-          <Route path="/" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/" element={<Navigate to="/chat" replace />} />
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/patient/:sessionId" element={<PatientDetail />} />
           <Route path="/chat" element={<Chat />} />

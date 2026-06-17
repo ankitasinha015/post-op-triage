@@ -1,11 +1,14 @@
 # AI Triage Nurse — Post-Op Recovery Agent
 
-A multi-agent AI system that simulates a post-operative recovery triage nurse. Patients chat naturally about how they're feeling; three Claude-powered agents collaborate behind the scenes to collect symptoms, investigate clinical patterns, and escalate alerts to a real-time nurse dashboard.  https://ai-triage-nurse.onrender.com
+A multi-agent AI system that simulates a post-operative recovery triage nurse. Patients chat naturally about how they're feeling; three Claude-powered agents collaborate behind the scenes to collect symptoms, investigate clinical patterns, and escalate alerts to a real-time nurse dashboard.
+
+**Live demo:** https://ai-triage-nurse.onrender.com
 
 **This is not medical advice.** It's a portfolio project demonstrating multi-agent architecture, clinical reasoning patterns, and AI safety guardrails.
 
 ![Python](https://img.shields.io/badge/Python-3.11+-blue)
-![Anthropic](https://img.shields.io/badge/Claude-Sonnet%20%2B%20Haiku-purple)
+![Anthropic](https://img.shields.io/badge/Claude-Sonnet%204.5%20%2B%20Haiku%204.5-purple)
+![React](https://img.shields.io/badge/React-18-61dafb)
 ![Tests](https://img.shields.io/badge/Tests-139%20passing-brightgreen)
 
 ---
@@ -22,8 +25,9 @@ Most LLM projects wire up a single model to a prompt. This one coordinates **thr
 |----------|-----|
 | **Raw Anthropic SDK** (no LangChain/LangGraph) | Full visibility into tool-use loops, state management, and guardrails. Frameworks abstract the parts I wanted to understand. |
 | **SQLite as coordination layer** | Agents read each other's outputs through DB queries. No message bus, no direct calls. Simple, auditable, concurrent (WAL mode). |
-| **No vector database** | Knowledge base is ~6,800 tokens (3 surgeries, 4 drugs, 21 red flags). That's 3.4% of Claude's 200K context. RAG would add complexity with zero benefit at this scale. Architecture is designed so retrieval can swap from dict lookup to vector search when it needs to. |
-| **Three models, not one** | Conversationalist (Sonnet) optimizes for empathy. Risk Assessor (Sonnet) optimizes for pattern detection. Escalator (Haiku) optimizes for fast, cheap alert translation. Each has a focused prompt and can be tested independently. |
+| **No vector database** | Knowledge base is ~6,800 tokens (3 surgeries, 4 drugs, 21 red flags). That's 3.4% of Claude's 200K context. RAG would add complexity with zero benefit at this scale. |
+| **Hybrid risk scoring** | LLM proposes a score, deterministic guardrails enforce expected ranges per surgery type and recovery day. Prevents both over- and under-scoring. |
+| **Three models, not one** | Conversationalist (Sonnet) for empathy. Risk Assessor (Sonnet) for pattern detection. Escalator (Haiku) for fast, cheap alert translation. Each has a focused prompt and can be tested independently. |
 
 ---
 
@@ -36,32 +40,40 @@ Patient message arrives
   [Emergency Bypass] ──── 23 regex patterns, runs BEFORE any agent
        |
        v
-  CONVERSATIONALIST (Sonnet, tool-use loop)
+  CONVERSATIONALIST (Claude Sonnet 4.5, tool-use loop)
   - Forms hypotheses about symptoms
   - Asks discriminating questions (not checklists)
   - Reads investigation gaps from Risk Assessor
   - Logs structured data via 4 tools
+  - Greets returning patients with prior session context
        |
        |  (background thread, async)
        v
-  RISK ASSESSOR (Sonnet, tool-use loop)
+  RISK ASSESSOR (Claude Sonnet 4.5, tool-use loop)
   - 6 investigation tools: trends, medication masking, gap detection
   - Autonomously decides what to examine
   - Flags questions for Conversationalist via investigation_gaps table
   - Writes risk score + clinical reasoning
        |
        v
-  ESCALATOR (Haiku)
-  - Translates risk assessment into nurse-facing alert
-  - Specific actions, reassessment windows, severity levels
-  - Validates severity floor (won't under-escalate)
+  GUARDRAILS (deterministic, 5 layers)
+  - Hallucination detector removes unsupported signals
+  - Expected-symptom cap prevents over-scoring normal recovery
+  - Writes adjusted score back to DB
        |
        v
-  NURSE DASHBOARD (Streamlit, auto-refresh)
-  - Alert banner with severity color coding
-  - Risk score trend chart
-  - Clinical timeline (symptoms, vitals, meds)
-  - Alert history
+  ESCALATOR (Claude Haiku 4.5)
+  - Translates risk assessment into nurse-facing alert
+  - CTA matrix: specific actions per severity tier
+  - Reassessment windows (routine=next shift, critical=30min, 911=continuous)
+       |
+       v
+  NURSE DASHBOARD (React SPA, FastAPI backend)
+  - Risk score with 5-level color coding
+  - Symptom bars with severity visualization
+  - Medication tracking with smart display
+  - CTA cards with numbered action items
+  - Recovery timeline
 ```
 
 ### Inter-Agent Feedback Loop
@@ -79,6 +91,10 @@ The Conversationalist picks this up and asks naturally: *"You mentioned some dra
 
 The patient never knows there are two agents collaborating.
 
+### Cross-Session Patient History
+
+Returning patients are greeted with context from prior sessions. The system tracks unresolved concerns, compares symptom trajectories across visits, and avoids re-asking the same generic opening questions. A patient checking in for the second time feels continuity, not repetition.
+
 ---
 
 ## Safety: Five-Layer Guardrail System
@@ -88,8 +104,20 @@ The patient never knows there are two agents collaborating.
 | **1. Emergency Bypass** | "can't breathe", "chest pain", "bleeding won't stop" (23 patterns) | Before any agent |
 | **2. Output Filter** | Diagnosis language ("you have DVT"), prescription language ("take 800mg") | After Conversationalist reply |
 | **3. Hallucination Detector** | Risk Assessor claims signals not supported by patient data | After Risk Assessor |
-| **4. Score Sanity Check** | Risk score of 85 with only one mild signal | After Risk Assessor |
+| **4. Expected-Symptom Cap** | Day 1 normal symptoms scored as urgent; caps score at 25 when all symptoms are within expected ranges for surgery type + recovery day | After Risk Assessor |
 | **5. Tool Input Validator** | Severity of 50/10, SQL injection in symptom names | Before tool execution |
+
+### Nurse CTA Matrix
+
+The Escalator maps severity tiers to specific nurse actions:
+
+| Tier | Actions | Reassess |
+|------|---------|----------|
+| **Routine** | Continue monitoring, encourage ambulation | Next shift |
+| **Monitor** | Document, increase monitoring frequency, educate patient | 4-8 hours |
+| **Urgent** | Focused assessment, full vitals, notify attending with SBAR | 1-2 hours |
+| **Critical** | Assess immediately, call surgeon NOW with SBAR, continuous monitoring | 30 minutes |
+| **911-Now** | Call 911/rapid response, maintain airway, crash cart | Continuous |
 
 ---
 
@@ -98,6 +126,7 @@ The patient never knows there are two agents collaborating.
 Not a rule engine. Reference knowledge that agents use to reason — the same way a nurse consults training.
 
 - **3 surgery types** with expected pain curves, milestones, and surgery-specific red flags
+- **Expected symptom ranges** per surgery type and recovery day (Day 1-7) for deterministic guardrail scoring
 - **4 medications** with pharmacology, masking effects, and clinical reasoning notes
 - **4 vital sign types** with interpretation guides and contextual reasoning
 - **21 red-flag signals** filtered by surgery type and recovery day
@@ -116,8 +145,11 @@ pip install -e ".[dev]"
 # Set your API key
 echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 
+# Build the frontend
+cd frontend && npm install && npm run build && cd ..
+
 # Run the app
-streamlit run app.py
+python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 
 # Run tests (no API key needed)
 pytest tests/ -v
@@ -125,7 +157,8 @@ pytest tests/ -v
 
 ### Requirements
 - Python 3.11+
-- Anthropic API key (Claude Sonnet + Haiku access)
+- Node.js 18+ (for frontend build)
+- Anthropic API key (Claude Sonnet 4.5 + Haiku 4.5 access)
 - ~$0.25 per full conversation (10 patient messages)
 
 ---
@@ -134,31 +167,38 @@ pytest tests/ -v
 
 ```
 post-op-triage/
-  app.py                          # Streamlit entry point, two-column layout
-  conftest.py                     # Shared test fixtures (fresh DB per test)
+  api/
+    main.py                         # FastAPI backend, serves React SPA + API
+  frontend/
+    src/
+      pages/
+        Chat.jsx                    # Patient chat interface
+        PatientDetail.jsx           # Nurse detail view with risk score, symptoms, CTAs
+      components/
+        Layout.jsx                  # App shell with sidebar navigation
   src/
-    db.py                         # SQLite layer, thread-local connections, WAL mode
-    schema.sql                    # 9 tables including investigation_gaps
-    tools.py                      # Conversationalist tool definitions + execution
-    red_flags.py                  # 21-signal red flag matrix (typed dataclasses)
-    clinical_knowledge.py         # Surgery timelines, med pharmacology, vital ranges
-    guardrails.py                 # Five-layer safety system
-    synthetic_scenarios.py        # Few-shot reasoning examples for agents
+    db.py                           # SQLite layer, thread-local connections, WAL mode
+    schema.sql                      # 9 tables including investigation_gaps
+    tools.py                        # Conversationalist tool definitions + execution
+    red_flags.py                    # 21-signal red flag matrix (typed dataclasses)
+    clinical_knowledge.py           # Surgery timelines, med pharmacology, expected symptom ranges
+    guardrails.py                   # Five-layer safety system with expected-symptom cap
+    synthetic_scenarios.py          # Few-shot reasoning examples for agents
     agents/
-      conversationalist.py        # Patient-facing agent (Sonnet, tool-use loop)
-      risk_assessor.py            # Clinical investigator (Sonnet, 6 tools, tool-use loop)
-      escalator.py                # Alert translator (Haiku)
+      conversationalist.py          # Patient-facing agent (Sonnet 4.5, tool-use loop)
+      risk_assessor.py              # Clinical investigator (Sonnet 4.5, 6 tools, tool-use loop)
+      escalator.py                  # Alert translator (Haiku 4.5) with CTA matrix
     scenarios/
-      knee_day3.json              # 7 clinical scenarios covering
-      knee_day7_infection.json    # all 3 surgery types, routine
-      knee_day1_routine.json      # through emergency presentations
+      knee_day3.json                # 7 clinical scenarios covering
+      knee_day7_infection.json      # all 3 surgery types, routine
+      knee_day1_routine.json        # through emergency presentations
       hip_day5.json
       hip_day4_dvt.json
       appendix_day1.json
       appendix_day5_abscess.json
-  tests/                          # 139 tests, all run without API calls
+  tests/                            # 139 tests, all run without API calls
   docs/
-    ARCHITECTURE.md               # Full technical architecture document
+    ARCHITECTURE.md                 # Full technical architecture document
 ```
 
 ---
@@ -203,7 +243,7 @@ Prompt caching (`cache_control: ephemeral`) on Risk Assessor system prompts redu
 | SQLite with WAL mode | PostgreSQL with connection pooling |
 | 3 surgery types | 50+ with retrieval-augmented knowledge |
 | Background thread | Task queue (Celery/Redis) |
-| Single-process Streamlit | API server + separate frontend |
+| Expected-symptom ranges in code | Clinical rules engine with version control |
 | Raw SDK | LangGraph for state machines + Agent SDK for tool loops |
 
 The architecture is designed for this swap: `get_surgery_knowledge()` changes from dict lookup to vector search. Agent code stays the same. Only the retrieval layer changes.
@@ -213,7 +253,8 @@ The architecture is designed for this swap: `get_surgery_knowledge()` changes fr
 ## Built With
 
 - [Anthropic Claude API](https://docs.anthropic.com/) — Claude Sonnet 4.5 + Haiku 4.5
-- [Streamlit](https://streamlit.io/) — Two-column dashboard UI
+- [FastAPI](https://fastapi.tiangolo.com/) — Backend API serving React SPA
+- [React](https://react.dev/) + [Tailwind CSS](https://tailwindcss.com/) — Nurse dashboard and chat UI
 - [SQLite](https://sqlite.org/) — Shared agent state with WAL mode
 - [pytest](https://pytest.org/) — 139 tests, no API mocking needed
 

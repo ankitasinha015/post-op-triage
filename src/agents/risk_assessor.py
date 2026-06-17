@@ -57,6 +57,19 @@ use flag_investigation_gap. Be specific: "Ask about wound drainage character —
 5. WRITE your final assessment. When you've gathered enough information, use write_risk_alert \
 with your severity level and detailed clinical reasoning.
 
+CRITICAL SCORING CALIBRATION:
+- Day 1-2 post-op: Many symptoms are EXPECTED from surgery itself. Moderate pain (4-6/10), \
+mild incision redness/warmth, low-grade temp (<100.4F), nausea, and mild swelling are all \
+NORMAL inflammatory responses. Do NOT score these above 25 unless they are SEVERE (>7/10), \
+rapidly worsening, or combined with systemic signs (high fever, tachycardia, altered mental status).
+- Score 0-20 = normal recovery (expected symptoms for this surgery + day)
+- Score 21-40 = worth monitoring (one mild concern OR something slightly outside expected range)
+- Score 41-60 = needs clinical review (clear deviation from expected OR multiple concerning signals)
+- Score 61-80 = urgent (dangerous pattern: worsening trajectory, systemic signs, or high-risk combination)
+- Score 81-100 = emergency (life-threatening signs)
+- Ask yourself: "Would an experienced nurse call the surgeon about this?" If the answer is "no, this is \
+expected for this patient's recovery day and surgery type," the score should be ≤25.
+
 IMPORTANT:
 - You are NOT talking to the patient. You are producing an internal clinical analysis.
 - Use 2-5 tools to investigate before writing your final assessment.
@@ -343,12 +356,12 @@ def assess_risk(client: anthropic.Anthropic, session_id: str) -> dict | None:
     if med_context:
         clinical_knowledge += "\n\n" + med_context
 
-    system_prompt = SYSTEM_PROMPT.format(
-        patient_context=patient_context,
-        clinical_knowledge=clinical_knowledge,
-        vital_reasoning=vital_reasoning,
-        red_flag_matrix=red_flag_matrix,
-        reasoning_examples=reasoning_examples,
+    system_prompt = (SYSTEM_PROMPT
+        .replace("{patient_context}", patient_context)
+        .replace("{clinical_knowledge}", clinical_knowledge)
+        .replace("{vital_reasoning}", vital_reasoning)
+        .replace("{red_flag_matrix}", red_flag_matrix)
+        .replace("{reasoning_examples}", reasoning_examples)
     )
 
     messages = [

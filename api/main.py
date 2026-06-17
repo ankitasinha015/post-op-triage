@@ -207,12 +207,22 @@ def _run_risk_pipeline_async(client, session_id: str):
                 guardrail_result = run_guardrails_on_risk_assessment(
                     session_id, risk_result
                 )
-                if guardrail_result and guardrail_result.get("should_escalate"):
-                    escalate(client, session_id, risk_result)
+                if guardrail_result:
+                    if guardrail_result.get("guardrail_adjustments"):
+                        db.write_risk_score(
+                            session_id=session_id,
+                            score=guardrail_result["score"],
+                            triggered_signals=guardrail_result["triggered_signals"],
+                            reasoning=guardrail_result["reasoning"],
+                        )
+                    escalate(client, session_id, guardrail_result)
         except Exception as e:
+            import traceback
+            print(f"[RISK PIPELINE ERROR] {type(e).__name__}: {e}")
+            traceback.print_exc()
             db.write_alert(
                 session_id, "system-error",
-                f"Risk pipeline failed: {type(e).__name__}",
+                f"Risk pipeline failed: {type(e).__name__}: {e}",
                 signals=["pipeline_failure"],
             )
 

@@ -52,22 +52,35 @@ EMERGENCY_PHRASES = [
 _EMERGENCY_PATTERNS = [re.compile(p, re.IGNORECASE) for p in EMERGENCY_PHRASES]
 
 
+def _pattern_to_label(pattern_str: str) -> str:
+    """Convert a regex pattern to a human-readable label for nurse-facing alerts."""
+    cleaned = pattern_str.replace(r"\b", "").replace(r"\B", "")
+    cleaned = re.sub(r"\(.+?\)\??", "", cleaned)
+    cleaned = re.sub(r"\[.+?\]", "", cleaned)
+    cleaned = re.sub(r"\\s\+", " ", cleaned)
+    cleaned = re.sub(r"[\\?+*^${}|]", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned or "emergency phrase"
+
+
 def check_emergency_bypass(user_message: str) -> dict | None:
     """Check if the patient's message contains emergency phrases.
     Returns an alert dict if triggered, None otherwise.
     This runs BEFORE any agent — it's the fastest path to escalation."""
-    matched = []
+    matched_patterns = []
+    matched_labels = []
     for pattern in _EMERGENCY_PATTERNS:
         if pattern.search(user_message):
-            matched.append(pattern.pattern)
+            matched_patterns.append(pattern.pattern)
+            matched_labels.append(_pattern_to_label(pattern.pattern))
 
-    if not matched:
+    if not matched_patterns:
         return None
 
     return {
         "severity": "911-now",
-        "summary": f"EMERGENCY KEYWORDS DETECTED in patient message. Matched: {', '.join(matched[:3])}",
-        "signals": ["emergency_bypass"] + matched[:5],
+        "summary": f"EMERGENCY — Emergency keywords detected in patient message: {', '.join(matched_labels[:3])}",
+        "signals": ["emergency_bypass"] + matched_patterns[:5],
         "recommended_action": (
             "This alert was triggered by emergency keywords in the patient's message, "
             "bypassing normal risk assessment. Immediate clinical review required. "
@@ -441,6 +454,18 @@ def run_guardrails_on_risk_assessment(session_id: str, assessment: dict) -> dict
     sanity = check_score_sanity(session_id, score, triggered)
     if sanity["was_adjusted"]:
         score = sanity["adjusted_score"]
+        reasoning = re.sub(
+            r"[Ss]core\s+\d+",
+            f"Score {score}",
+            reasoning,
+        )
+        if sanity["reason"]:
+            reasoning += f" [Guardrail adjustment: {sanity['reason']}]"
+
+    if hallucinated:
+        reasoning = re.sub(
+            r"\[GUARDRAIL:.*?\]", "", reasoning
+        ).strip()
 
     return {
         "score": score,

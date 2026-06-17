@@ -7,6 +7,9 @@ import {
 import { api } from '../lib/api';
 import { riskColor, initials } from '../lib/utils';
 
+const cleanReasoning = (text) =>
+  text ? text.replace(/\s*\[GUARDRAIL:[^\]]*\]\s*/g, ' ').trim() : text;
+
 export default function PatientDetail() {
   const { sessionId } = useParams();
   const navigate = useNavigate();
@@ -201,7 +204,7 @@ export default function PatientDetail() {
               <SevIcon className={`w-5 h-5 ${s.icon} mt-0.5 shrink-0`} />
               <div className="flex-1">
                 <p className={`text-sm font-semibold ${s.title} uppercase tracking-wide`}>
-                  {sev === '911-now' ? 'EMERGENCY' : sev.toUpperCase()} — {latest.summary}
+                  {sev === '911-now' ? 'EMERGENCY' : sev.toUpperCase()} — {latest.summary.replace(/\s*[Mm]atched:\s*.*$/, '')}
                 </p>
 
                 {actions.length > 0 && (
@@ -222,7 +225,7 @@ export default function PatientDetail() {
 
                 {riskScores.length > 0 && riskScores[riskScores.length - 1].reasoning && (
                   <p className={`text-xs ${s.text} mt-3 opacity-80`}>
-                    AI Rationale: {riskScores[riskScores.length - 1].reasoning}
+                    AI Rationale: {cleanReasoning(riskScores[riskScores.length - 1].reasoning)}
                   </p>
                 )}
               </div>
@@ -305,7 +308,7 @@ export default function PatientDetail() {
             <div className="border-t border-slate-100 pt-3 mt-3">
               <p className="text-xs text-slate-500 uppercase tracking-wide mb-2">AI assessment</p>
               <p className="text-sm text-slate-600 leading-relaxed">
-                {riskScores[riskScores.length - 1].reasoning || 'No reasoning provided.'}
+                {cleanReasoning(riskScores[riskScores.length - 1].reasoning) || 'No reasoning provided.'}
               </p>
             </div>
           )}

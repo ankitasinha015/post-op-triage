@@ -1,4 +1,4 @@
-# RapidAI — Product Requirements Document & Roadmap
+# AI Triage Nurse — Product Requirements Document & Roadmap
 
 Our solution provides continuous, personalized monitoring and clinical guidance to post-surgical patients at home, enabling early detection of complications and reducing preventable readmissions through real-time clinician visibility into patient recovery.
 
@@ -49,9 +49,9 @@ Sarah (Patient), Age 60, Knee Replacement, post-op recovery phase
 - No explainability for critical alerts: General AIs can't "show their work" with patient-specific logic, critical for FDA safety, trust, and clinical hand-off.
 - No escalation safety net: They can't page a doctor, handle red flags, or integrate into real-world clinical workflows.
 
-### RapidAI's Unique Solution and MOAT
+### AI Triage Nurse's Unique Solution and MOAT
 
-| Challenge | Status Quo | ChatGPT/Copilots | RapidAI |
+| Challenge | Status Quo | ChatGPT/Copilots | AI Triage Nurse |
 |---|---|---|---|
 | Predict early risk | Manual, late | No personal data or prediction | Context-aware multi-agent AI with 21 red-flag rules, detects risk 2-3 days before symptoms |
 | False alarms | High, frustrating | Random hallucinations | <10% false-positive via 5-layer guardrail system (hallucination detector, score sanity, input validator) |
@@ -63,11 +63,11 @@ Sarah (Patient), Age 60, Knee Replacement, post-op recovery phase
 
 ### Why Agentic AI?
 
-1. **Unstructured Data:** Patients submit descriptions in unpredictable formats. RapidAI uses Claude LLMs (Conversationalist agent) to interpret natural language, extract structured clinical data via tool calls (`log_symptom`, `log_vital`, `log_med_taken`), and combine all types of inputs for accurate real-world triage.
+1. **Unstructured Data:** Patients submit descriptions in unpredictable formats. AI Triage Nurse uses Claude LLMs (Conversationalist agent) to interpret natural language, extract structured clinical data via tool calls (`log_symptom`, `log_vital`, `log_med_taken`), and combine all types of inputs for accurate real-world triage.
 
 2. **Context Awareness:** Recovery is complex; what's concerning on Day 1 might be normal on Day 3 for a different surgery type. The Risk Assessor agent evaluates each case using surgery-specific timelines (expected pain curves, milestone windows), medication context (NSAID fever masking, opioid pain masking), and symptom trajectory patterns — whereas rigid automations miss these subtleties.
 
-3. **Dynamic Planning & Escalation:** When faced with ambiguous symptoms, RapidAI's Risk Assessor runs an agentic investigation loop (up to 6 iterations) — calling tools to check symptom trends, vital trajectories, medication masking effects, and time-gap analysis. It can flag investigation gaps for the Conversationalist to probe in the next turn. Rule-based systems can't handle this adaptive reasoning.
+3. **Dynamic Planning & Escalation:** When faced with ambiguous symptoms, AI Triage Nurse's Risk Assessor runs an agentic investigation loop (up to 6 iterations) — calling tools to check symptom trends, vital trajectories, medication masking effects, and time-gap analysis. It can flag investigation gaps for the Conversationalist to probe in the next turn. Rule-based systems can't handle this adaptive reasoning.
 
 4. **Real Decision-Making:** Recovery risks come in complex, overlapping combinations (mild swelling + pain language + activity drop). The 21-signal red flag matrix combined with agentic tool-use surfaces weak-signal risks that static rules would miss or over-alert on — reducing both missed complications and alert fatigue.
 
@@ -77,7 +77,7 @@ Sarah (Patient), Age 60, Knee Replacement, post-op recovery phase
 
 ### 1.1 Architecture Overview
 
-RapidAI uses a **multi-agent orchestration** architecture with three specialized Claude-powered AI agents coordinated through a shared SQLite database:
+AI Triage Nurse uses a **multi-agent orchestration** architecture with three specialized Claude-powered AI agents coordinated through a shared SQLite database:
 
 #### Multi-Agent Pipeline
 
@@ -229,7 +229,7 @@ flowchart LR
 ```mermaid
 %%{init: {'theme': 'base', 'themeVariables': {'primaryTextColor': '#000000', 'lineColor': '#555555', 'background': '#ffffff', 'mainBkg': '#ffffff', 'edgeLabelBackground': '#ffffff'}}}%%
 flowchart TD
-    A["🏥 Hospital Discharge\nPatient receives RapidAI link"]
+    A["🏥 Hospital Discharge\nPatient receives AI Triage Nurse link"]
     B["📱 Onboard\nSelect surgery type,\nrecovery day, name"]
     C["💬 Daily Check-In\nPatient describes how\nthey're feeling"]
 
@@ -324,7 +324,7 @@ flowchart LR
 ### 1.4 Hallucination Mitigation
 
 **What It Means Here:**
-RapidAI could give a wrong, made-up, or misleading answer that isn't based on a patient's real symptoms, photos, or data.
+AI Triage Nurse could give a wrong, made-up, or misleading answer that isn't based on a patient's real symptoms, photos, or data.
 
 **How We Mitigate:**
 - **Layer 3 (Hallucination Detector):** 20+ signal-to-data mappings. Every risk signal (e.g., `fever_persistent`, `dvt_leg_swelling`) must have corresponding evidence in the patient's actual logged symptoms/vitals. Unsupported signals are stripped before scoring.
@@ -336,7 +336,7 @@ RapidAI could give a wrong, made-up, or misleading answer that isn't based on a 
 ### 1.5 Explainability
 
 **What It Means Here:**
-Every time RapidAI sends an alert or risk score, it transparently "shows its work."
+Every time AI Triage Nurse sends an alert or risk score, it transparently "shows its work."
 
 **How We Implement:**
 - **Risk Assessor reasoning:** Every `write_risk_alert` tool call includes a `reasoning` field explaining the clinical logic (e.g., "Pain reversal on Day 7 with low-grade fever while taking NSAIDs suggests possible infection — ibuprofen may be masking true temperature").
@@ -614,7 +614,7 @@ flowchart LR
 ### Accountability
 
 **Efficacy and limitations:**
-- RapidAI is a clinical decision-support tool, NOT a diagnostic system. It surfaces risk signals for clinician review.
+- AI Triage Nurse is a clinical decision-support tool, NOT a diagnostic system. It surfaces risk signals for clinician review.
 - Limited to 3 surgery types (knee replacement, hip replacement, appendectomy) with surgery-specific clinical knowledge.
 - Dependent on patient self-reporting — cannot detect complications patients don't describe.
 - 4-turn bounded conversation may not capture all relevant information in complex cases.
@@ -768,7 +768,7 @@ flowchart LR
 
 ### 7.7 Pricing Models
 
-| Model | Description | Fit for RapidAI |
+| Model | Description | Fit for AI Triage Nurse |
 |---|---|---|
 | **Per-patient-episode (Recommended)** | Hospital pays $200-500 per surgical patient monitored for 30-90 days | Best fit — aligns with bundled payment model, clear ROI ($200 vs $15-20K readmission) |
 | SaaS subscription | Hospital pays monthly fee for platform access | Less aligned — doesn't scale with volume or demonstrate value per patient |

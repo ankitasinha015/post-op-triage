@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src import db
-from src.guardrails import check_emergency_bypass
+from src.guardrails import check_emergency_bypass, check_semantic_emergency, check_manipulation
 
 # Norton TLS fix
 CERT_PATH = Path.home() / "certs" / "cacert.pem"
@@ -139,6 +139,7 @@ def send_message(session_id: str, req: SendMessageRequest):
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
+    # Layer 1a: Regex emergency bypass (0ms, free)
     emergency = check_emergency_bypass(req.message)
     if emergency:
         db.save_message(session_id, "user", req.message)
@@ -162,6 +163,38 @@ def send_message(session_id: str, req: SendMessageRequest):
     import anthropic
     from src.agents.conversationalist import run_turn
     client = anthropic.Anthropic()
+
+    # Layer 1b: Semantic emergency classifier (~500ms, catches what regex misses)
+    semantic_emergency = check_semantic_emergency(client, req.message)
+    if semantic_emergency:
+        db.save_message(session_id, "user", req.message)
+        db.write_alert(
+            session_id, "911-now", semantic_emergency["summary"],
+            signals=semantic_emergency["signals"],
+            recommended_action=semantic_emergency["recommended_action"],
+        )
+        reply = (
+            "I'm concerned about what you're describing. "
+            "If you are experiencing a life-threatening emergency, please call 911 immediately. "
+            "A clinical team member has been alerted and will review your situation."
+        )
+        db.save_message(session_id, "assistant", reply)
+        return {
+            "reply": reply,
+            "emergency": True,
+            "alert": semantic_emergency["summary"],
+        }
+
+    # Layer 6: Manipulation / off-topic detector
+    manipulation = check_manipulation(req.message, client)
+    if manipulation:
+        db.save_message(session_id, "user", req.message)
+        db.save_message(session_id, "assistant", manipulation["safe_reply"])
+        return {
+            "reply": manipulation["safe_reply"],
+            "emergency": False,
+            "guardrail": manipulation["type"],
+        }
 
     try:
         reply = run_turn(client, session_id, req.message)
@@ -187,11 +220,25 @@ def send_message(session_id: str, req: SendMessageRequest):
     except (json.JSONDecodeError, TypeError):
         pass
 
+    # Layer 7: Data completeness check on conclusion
+    completeness = None
+    if is_conclusion:
+        from src.guardrails import check_data_completeness
+        completeness = check_data_completeness(session_id)
+        if completeness["severity"] == "insufficient":
+            db.write_alert(
+                session_id, "monitor",
+                f"Session concluded with insufficient clinical data (score: {completeness['completeness_score']}/100)",
+                signals=["data_completeness_gap"],
+                recommended_action="; ".join(completeness["gaps"]),
+            )
+
     return {
         "reply": reply,
         "emergency": False,
         "is_conclusion": is_conclusion,
         "conclusion": conclusion_data,
+        "completeness": completeness,
     }
 
 

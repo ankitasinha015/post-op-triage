@@ -4,7 +4,7 @@
 
 A multi-agent AI system that simulates a post-operative recovery triage nurse. A patient chats naturally about how they're feeling; three Claude-powered agents collaborate behind the scenes to collect symptoms, assess risk, and escalate alerts to a real-time nurse dashboard.
 
-Each agent is a **clinical reasoner**, not a checklist-follower. They form hypotheses, detect patterns, reason about trajectories, and make judgment calls — powered by clinical knowledge, synthetic reasoning examples, and a five-layer guardrail system.
+Each agent is a **clinical reasoner**, not a checklist-follower. They form hypotheses, detect patterns, reason about trajectories, and make judgment calls — powered by clinical knowledge, synthetic reasoning examples, and an eight-layer guardrail system.
 
 **Purpose:** Portfolio project demonstrating multi-agent orchestration, Anthropic SDK tool use, LLM guardrails, and structured clinical data extraction — built for technical interviewer audiences.
 
@@ -21,10 +21,29 @@ Patient Message
        |
        v
 +--------------------------------------------------+
-| LAYER 1: Emergency Keyword Bypass                |
+| LAYER 1a: Emergency Keyword Bypass               |
 | 23 regex patterns (chest pain, can't breathe,    |
 | uncontrolled bleeding, suicidal ideation, etc.)   |
 | Triggers 911-NOW alert BEFORE agents run          |
+| Cost: Free, 0ms                                   |
++--------------------------------------------------+
+       |
+       v
++--------------------------------------------------+
+| LAYER 1b: Semantic Emergency Classifier          |
+| Haiku LLM classifier catches natural-language    |
+| emergencies regex misses ("everything is going   |
+| dark", "I took all my pills at once")            |
+| Cost: ~$0.001, ~500ms                             |
++--------------------------------------------------+
+       |
+       v
++--------------------------------------------------+
+| LAYER 6: Manipulation / Off-Topic Detector       |
+| 13 regex patterns for prompt injection +          |
+| Haiku LLM classifier for off-topic abuse          |
+| Blocks: "ignore your instructions", "write a poem"|
+| Cost: Free (regex) + ~$0.001 (Haiku fallback)    |
 +--------------------------------------------------+
        |
        v
@@ -93,22 +112,31 @@ Patient Message
 +--------------------------------------------------------------------------+
 |                         SQLite (WAL mode)                                 |
 | sessions | symptoms | vitals | meds | messages | alerts | risk_scores   |
-|                          patient_history                                  |
+|                   patient_history | investigation_gaps                    |
 +--------------------------------------------------------------------------+
+       |
+       v
++--------------------------------------------------+
+| LAYER 7: Data Completeness Check                 |
+| On session conclusion, scores data quality 0-100  |
+| Checks: symptoms, vitals, meds, message count    |
+| Flags insufficient data for nurse review          |
+| Cost: Free                                        |
++--------------------------------------------------+
        |
        v
 +-------------------+
 |  NURSE DASHBOARD  |
-|  (Streamlit)      |
-|  Auto-refresh 3s  |
-|  - Alert banner   |
-|  - Risk sparkline |
-|  - Assessment     |
-|    reasoning      |
-|  - Triggered      |
-|    signals        |
-|  - Timeline       |
-|  - Alert history  |
+|  (React SPA +     |
+|   FastAPI backend) |
+|  - Risk score with |
+|    5-level colors  |
+|  - Symptom bars   |
+|  - Medication     |
+|    tracking       |
+|  - CTA cards      |
+|  - Recovery       |
+|    timeline       |
 +-------------------+
 ```
 
@@ -248,13 +276,21 @@ Each flag has: signal name, description, base weight (0-100), category, urgency 
 
 ## Guardrail System (`src/guardrails.py`)
 
-Five layers of protection. Prompts are suggestions — guardrails are enforcement.
+Eight layers of protection — 6 deterministic + 2 LLM-powered. Prompts are suggestions — guardrails are enforcement.
 
-### Layer 1: Emergency Keyword Bypass
+### Layer 1a: Emergency Keyword Bypass
 - **23 regex patterns** covering: respiratory distress, cardiac events, hemorrhage, loss of consciousness, suicidal ideation, anaphylaxis, etc.
 - Runs **BEFORE** any agent — fastest path to escalation
 - Creates `911-now` alert immediately, regardless of what agents think
 - Examples: "can't breathe", "chest pain", "bleeding won't stop", "throat is swelling"
+- **Cost:** Free, 0ms
+
+### Layer 1b: Semantic Emergency Classifier
+- **Haiku LLM classifier** catches natural-language emergencies that regex misses
+- Catches phrases like: "everything is going dark", "I took all my pills at once", "my heart feels like it's stopping"
+- Triggers at ≥0.85 confidence threshold
+- Creates `911-now` alert with LLM-generated reasoning
+- **Cost:** ~$0.001, ~500ms
 
 ### Layer 2: Output Content Filter
 - Scans Conversationalist's reply for three violation types:
@@ -263,18 +299,22 @@ Five layers of protection. Prompts are suggestions — guardrails are enforcemen
   - **Alarm language:** "go to the ER right now", "this is an emergency"
 - Violating replies are replaced with safe alternatives that acknowledge concern without crossing the line
 - Creates `system-error` alert so nurses see the agent attempted to diagnose/prescribe
+- **Cost:** Free
 
 ### Layer 3: Hallucination Detector
 - **15 signal-to-data mappings** that verify the Risk Assessor's claims against actual patient data
 - Checks: Did the patient actually report this symptom? Is there a vital reading that supports this signal? Does the trend data actually show worsening?
 - Hallucinated signals are removed from the assessment
 - Examples caught: triggering "chest_pain" when no chest pain was reported, triggering "fever_persistent" when temperature is 99.5F
+- **Cost:** Free
 
-### Layer 4: Score Sanity Check
+### Layer 4: Score Sanity Check (Expected-Symptom Cap)
 - **Floor:** Emergency symptoms (chest pain, breathing difficulty, uncontrolled bleeding) can never score below 70
 - **Ceiling:** No reported symptoms/vitals can never score above 20
 - **Consistency:** High score (>60) with no triggered signals is capped at 40
 - **Consistency:** Low score (<30) with 3+ triggered signals is raised to 45
+- **Expected-symptom cap:** Day 1 normal symptoms scored as urgent; caps score at 25 when all symptoms are within expected ranges for surgery type + recovery day
+- **Cost:** Free
 
 ### Layer 5: Tool Input Validator
 - Validates every tool call before execution:
@@ -284,6 +324,20 @@ Five layers of protection. Prompts are suggestions — guardrails are enforcemen
   - `ask_clarifying`: question required, max 500 chars
 - Invalid inputs are rejected and returned to Claude as errors (it can retry)
 - Clamped values (e.g., severity 15 -> 10) are accepted with a warning
+- **Cost:** Free
+
+### Layer 6: Manipulation / Off-Topic Detector
+- **Two-tier detection:** 13 regex patterns for prompt injection + Haiku LLM classifier for off-topic abuse
+- Regex catches: "ignore your instructions", "you are now", "system prompt", role-play attempts
+- Haiku catches: off-topic requests ("write me a poem", "help me with homework"), social engineering
+- Returns a safe redirect reply without engaging with the manipulation
+- **Cost:** Free (regex) + ~$0.001 (Haiku fallback)
+
+### Layer 7: Data Completeness Check
+- Runs on session conclusion to ensure sufficient clinical data was collected
+- Scores sessions 0-100 based on: symptoms (+40), vitals (+25), medications (+15), message count (+10), severity ratings (+10)
+- Creates a `monitor` alert if data is insufficient, flagging gaps for nurse review
+- **Cost:** Free
 
 ---
 
@@ -385,23 +439,35 @@ while True:
 
 ---
 
-## UI: Streamlit Two-Column Layout
+## UI: React SPA + FastAPI Backend
 
-### Left Column -- Patient Chat
-- Scenario selector dropdown (knee day 3, appendix day 1, hip day 5)
-- "Start New Session" button creates a new DB session
-- `st.chat_input` / `st.chat_message` for natural conversation
-- Emergency bypass runs on every message before agents
-- Error handling: agent failures surface as `system-error` alerts on the dashboard
+### Patient Chat (`frontend/src/pages/Chat.jsx`)
+- Scenario selector creates a new DB session via REST API
+- Real-time chat with typing indicators and smooth scrolling
+- Emergency lockout: chat input disabled after 911-now alert, red warning displayed
+- Conclusion card: shows session summary, key findings, and "Start new check-in" button
+- Progress bar shows conversation turn count
+- JSON conclusion responses parsed and rendered as structured cards
 
-### Right Column -- Nurse Dashboard
-- `@st.fragment(run_every=3)` -- auto-refreshes every 3 seconds without disrupting chat
-- **Alert banner:** Color-coded by severity (green/yellow/orange/red/grey)
-- **Risk score sparkline:** Last 10 scores as a line chart
-- **Latest assessment reasoning:** Shows the Risk Assessor's clinical reasoning
-- **Triggered signals:** Lists which red flags matched
-- **Recovery timeline:** Chronological log of symptoms, vitals, meds with emoji indicators
-- **Alert history:** Expandable section showing all past alerts
+### Nurse Dashboard (`frontend/src/pages/Dashboard.jsx`)
+- Worklist view: all patient sessions with risk score, surgery type, recovery day
+- Color-coded risk indicators (5-level: routine → 911-now)
+- Click-through to patient detail view
+
+### Patient Detail (`frontend/src/pages/PatientDetail.jsx`)
+- **Risk score** with 5-level color coding and clinical reasoning
+- **Symptom bars** with severity visualization
+- **Medication tracking** with smart display
+- **CTA cards** with numbered action items from Escalator
+- **Recovery timeline** with chronological symptom/vital/med log
+- **Alert history** with severity-coded entries
+
+### FastAPI Backend (`api/main.py`)
+- REST API serving React SPA + JSON endpoints
+- Static file mounting for production (Vite build output)
+- WebSocket support for real-time updates
+- Background thread for risk pipeline (patient doesn't wait)
+- CORS middleware for development mode
 
 ---
 
@@ -409,49 +475,62 @@ while True:
 
 ```
 post-op-triage/
-  app.py                          # Streamlit entry point + pipeline orchestration
-  pyproject.toml                  # Dependencies + project metadata
-  .env.example                    # ANTHROPIC_API_KEY template
-  .gitignore                      # Python + SQLite exclusions
-  triage.db                       # SQLite DB (gitignored, created at runtime)
-  docs/
-    ARCHITECTURE.md               # This file
+  api/
+    main.py                       # FastAPI backend, serves React SPA + REST API
+  frontend/
+    src/
+      pages/
+        Chat.jsx                  # Patient chat interface with emergency lockout
+        Dashboard.jsx             # Nurse worklist view
+        PatientDetail.jsx         # Nurse detail view with risk, symptoms, CTAs
+      components/
+        Layout.jsx                # App shell with sidebar navigation
+        NewSessionModal.jsx       # Scenario selector modal
+    vite.config.js                # Vite build configuration
   src/
     __init__.py
-    schema.sql                    # 8-table SQLite schema
+    schema.sql                    # 9-table SQLite schema
     db.py                         # DB layer (WAL, thread-local, CRUD, context builder)
     tools.py                      # Tool definitions + executor
-    guardrails.py                 # Five-layer safety system
+    guardrails.py                 # Eight-layer safety system (regex + LLM + deterministic)
     red_flags.py                  # 21 typed danger signals (dataclasses)
     clinical_knowledge.py         # Recovery timelines, drug info, vital interpretation
     synthetic_scenarios.py        # Few-shot reasoning examples for agents
     agents/
       __init__.py
       conversationalist.py        # Patient-facing reasoning agent (Sonnet, tool-use loop)
-      risk_assessor.py            # Background pattern recognition agent (Sonnet)
+      risk_assessor.py            # Background pattern recognition agent (Sonnet, 6 tools)
       escalator.py                # Alert severity + nurse text (Haiku)
     scenarios/
-      knee_day3.json              # Day 3 post knee replacement (Alex)
-      appendix_day1.json          # Day 1 post appendectomy (Jordan)
-      hip_day5.json               # Day 5 post hip replacement (Sam)
-  tests/
-    __init__.py
-    test_pipeline.py              # [Evening 5] Scenario-based pytest fixtures
+      knee_day3.json              # 7 clinical scenarios covering
+      knee_day7_infection.json    # all 3 surgery types, routine
+      knee_day1_routine.json      # through emergency presentations
+      hip_day5.json
+      hip_day4_dvt.json
+      appendix_day1.json
+      appendix_day5_abscess.json
+  tests/                          # 139 tests, all run without API calls
+  docs/
+    ARCHITECTURE.md               # This file
+  render.yaml                     # Render deployment config
+  pyproject.toml                  # Dependencies + project metadata
+  .env.example                    # ANTHROPIC_API_KEY template
+  triage.db                       # SQLite DB (gitignored, created at runtime)
 ```
 
 ---
 
-## Build Plan (7 Evenings)
+## Build History
 
-| Evening | Focus | Status |
-|---------|-------|--------|
-| 1 | Scaffold + Conversationalist agent + Streamlit UI | Done |
-| 2 | Risk Assessor + clinical knowledge + memory + reasoning agents + guardrails | Done |
+| Phase | Focus | Status |
+|-------|-------|--------|
+| 1 | Scaffold + Conversationalist agent + initial UI | Done |
+| 2 | Risk Assessor + clinical knowledge + memory + reasoning agents + 5-layer guardrails | Done |
 | 3 | Risk Assessor upgrade to agentic investigator (6 tools, feedback loop) | Done |
 | 4 | Escalator agent (Haiku) + 4 new scenarios (7 total) | Done |
-| 5 | Tests + deployment | Planned |
-| 6 | README + demo recording | Planned |
-| 7 | Buffer / voice input exploration | Planned |
+| 5 | 139 tests + React/FastAPI rewrite + Render deployment | Done |
+| 6 | 3 new guardrail layers (semantic emergency, manipulation detector, data completeness) | Done |
+| 7 | Documentation + demo preparation | Done |
 
 ---
 
@@ -466,13 +545,16 @@ A rule engine can check "temperature > 101.5 = flag." But it can't reason: "Temp
 ### Why few-shot reasoning examples?
 Prompts that say "think carefully" produce vague outputs. Prompts that show WRONG thinking vs RIGHT thinking with explicit reasoning teach the model the specific cognitive patterns we want. The examples encode clinical judgment that the model can generalize from.
 
-### Why five guardrail layers?
+### Why eight guardrail layers?
 Prompts are suggestions — the model can ignore them. Guardrails are code that runs after the model, enforcing constraints the model can't override. Each layer catches a different failure mode:
-- Layer 1 catches emergencies the model might underreact to
+- Layer 1a catches emergencies the model might underreact to (regex, instant)
+- Layer 1b catches natural-language emergencies regex misses (Haiku LLM, ~500ms)
 - Layer 2 catches the model overstepping its role
 - Layer 3 catches the model making things up
 - Layer 4 catches the model being inconsistent
 - Layer 5 catches malformed data before it enters the database
+- Layer 6 catches prompt injection and off-topic abuse (regex + Haiku LLM)
+- Layer 7 ensures sufficient clinical data was collected before session ends
 
 ### Why SQLite instead of a message broker?
 All three agents run in the same process. SQLite with WAL mode handles concurrent reads/writes cleanly. No infrastructure to deploy. The database IS the coordination layer — agents read each other's outputs directly.
@@ -487,7 +569,7 @@ Without it, the patient waits 5-11 seconds per message (Conversationalist + Risk
 A patient checking in on Day 5 shouldn't start from scratch. If they had swelling on Day 3 that was flagged as unresolved, the Day 5 agents should follow up on it. Memory transforms the system from "three conversations" into "one patient journey."
 
 ### Why thread-local DB connections?
-Python's `sqlite3` module raises errors when connections are shared across threads. `threading.local()` gives each thread its own connection. Combined with WAL mode, this allows the main Streamlit thread and the background assessment thread to operate concurrently.
+Python's `sqlite3` module raises errors when connections are shared across threads. `threading.local()` gives each thread its own connection. Combined with WAL mode, this allows the FastAPI request thread and the background assessment thread to operate concurrently.
 
 ### Why sliding window (20 messages)?
 Unbounded conversation history grows the context window every turn, increasing latency and cost. 20 messages (~10 turns) keeps enough context for clinical continuity without degrading performance.
@@ -505,8 +587,9 @@ Unbounded conversation history grows the context window every turn, increasing l
 
 ## Security Considerations
 
-- **Five-layer guardrail system:** Emergency bypass, output filtering, hallucination detection, score validation, input sanitization
-- **Prompt injection defense:** The Conversationalist system prompt explicitly instructs Claude to treat all patient input as clinical data, never as system instructions.
+- **Eight-layer guardrail system:** Emergency bypass (regex + LLM), output filtering, hallucination detection, score validation, input sanitization, manipulation detection (regex + LLM), data completeness
+- **Prompt injection defense:** Layer 6 detects prompt injection attempts with 13 regex patterns + Haiku LLM classifier for off-topic abuse. The Conversationalist system prompt explicitly instructs Claude to treat all patient input as clinical data, never as system instructions.
+- **Two-tier emergency detection:** Fast regex (0ms) + Haiku semantic classifier (~500ms) catches both keyword and natural-language emergencies.
 - **Output enforcement:** Even if the prompt fails, Layer 2 catches diagnosis/prescription language at the code level.
 - **Hallucination prevention:** Layer 3 verifies every risk signal against actual data — the model can't invent symptoms.
 - **Input validation:** Severity clamped to 0-10 in code + CHECK constraint in SQL. Vital types restricted to valid enum. Alert severity restricted to valid enum.
@@ -519,7 +602,7 @@ Unbounded conversation history grows the context window every turn, increasing l
 
 ```bash
 # 1. Clone and install
-git clone <repo-url>
+git clone https://github.com/ankitasinha015/post-op-triage.git
 cd post-op-triage
 pip install -e ".[dev]"
 
@@ -527,11 +610,16 @@ pip install -e ".[dev]"
 cp .env.example .env
 # Edit .env with your ANTHROPIC_API_KEY
 
-# 3. Launch
-streamlit run app.py
+# 3. Build the frontend
+cd frontend && npm install && npm run build && cd ..
+
+# 4. Launch
+python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
 
-The app opens at `http://localhost:8501`. Select a scenario, click "Start New Session", and chat as the patient. The nurse dashboard on the right updates automatically.
+The app opens at `http://localhost:8000`. The React SPA serves as both the patient chat interface and the nurse dashboard. Select a scenario, start a new check-in, and chat as the patient. The nurse dashboard updates as risk assessments complete in the background.
+
+**Live demo:** https://ai-triage-nurse.onrender.com
 
 ---
 
@@ -540,7 +628,12 @@ The app opens at `http://localhost:8501`. Select a scenario, click "Start New Se
 | Package | Version | Purpose |
 |---------|---------|---------|
 | `anthropic` | >=0.40 | Claude API SDK (tool use, prompt caching) |
-| `streamlit` | >=1.33 | Web UI (chat, dashboard, fragments) |
+| `fastapi` | >=0.100 | REST API + WebSocket backend |
+| `uvicorn` | >=0.20 | ASGI server |
 | `python-dotenv` | >=1.0 | .env file loading |
-| `pytest` | >=8.0 (dev) | Test runner |
+| `react` | 18 | Frontend SPA framework |
+| `tailwindcss` | 3 | Utility-first CSS |
+| `vite` | 5 | Frontend build tool |
+| `pytest` | >=8.0 (dev) | Test runner (139 tests) |
 | Python | >=3.11 | Type hints, match statements |
+| Node.js | >=18 | Frontend build |

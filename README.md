@@ -37,7 +37,13 @@ Most LLM projects wire up a single model to a prompt. This one coordinates **thr
 Patient message arrives
        |
        v
-  [Emergency Bypass] ──── 23 regex patterns, runs BEFORE any agent
+  [Layer 1a: Emergency Bypass] ──── 23 regex patterns, instant, free
+       |
+       v
+  [Layer 1b: Semantic Emergency] ── Haiku classifier, catches natural language
+       |
+       v
+  [Layer 6: Manipulation Detector] ── blocks prompt injection + off-topic
        |
        v
   CONVERSATIONALIST (Claude Sonnet 4.5, tool-use loop)
@@ -56,9 +62,10 @@ Patient message arrives
   - Writes risk score + clinical reasoning
        |
        v
-  GUARDRAILS (deterministic, 5 layers)
+  GUARDRAILS (8 layers, 6 deterministic + 2 LLM)
   - Hallucination detector removes unsupported signals
   - Expected-symptom cap prevents over-scoring normal recovery
+  - Data completeness check on session conclusion
   - Writes adjusted score back to DB
        |
        v
@@ -97,15 +104,20 @@ Returning patients are greeted with context from prior sessions. The system trac
 
 ---
 
-## Safety: Five-Layer Guardrail System
+## Safety: Eight-Layer Guardrail System
 
-| Layer | What it catches | When it runs |
-|-------|----------------|-------------|
-| **1. Emergency Bypass** | "can't breathe", "chest pain", "bleeding won't stop" (23 patterns) | Before any agent |
-| **2. Output Filter** | Diagnosis language ("you have DVT"), prescription language ("take 800mg") | After Conversationalist reply |
-| **3. Hallucination Detector** | Risk Assessor claims signals not supported by patient data | After Risk Assessor |
-| **4. Expected-Symptom Cap** | Day 1 normal symptoms scored as urgent; caps score at 25 when all symptoms are within expected ranges for surgery type + recovery day | After Risk Assessor |
-| **5. Tool Input Validator** | Severity of 50/10, SQL injection in symptom names | Before tool execution |
+Six layers are free and instant (regex, DB lookups, range checks). Two use Haiku for semantic classification (~$0.001 each, ~500ms). Defense in depth: if the prompt fails, deterministic guardrails catch it.
+
+| Layer | What it catches | When it runs | Cost |
+|-------|----------------|-------------|------|
+| **1a. Emergency Bypass** | "can't breathe", "chest pain", "bleeding won't stop" (23 regex patterns) | Before any agent | Free, 0ms |
+| **1b. Semantic Emergency** | "everything is going dark", "I took all my pills at once" — natural language emergencies regex misses | Before any agent | ~$0.001, ~500ms |
+| **2. Output Filter** | Diagnosis language ("you have DVT"), prescription language ("take 800mg") | After Conversationalist reply | Free |
+| **3. Hallucination Detector** | Risk Assessor claims signals not supported by patient data | After Risk Assessor | Free |
+| **4. Expected-Symptom Cap** | Day 1 normal symptoms scored as urgent; caps score at 25 when all symptoms are within expected ranges for surgery type + recovery day | After Risk Assessor | Free |
+| **5. Tool Input Validator** | Severity of 50/10, SQL injection in symptom names | Before tool execution | Free |
+| **6. Manipulation Detector** | Prompt injection ("ignore your instructions"), off-topic abuse ("write me a poem") | Before Conversationalist | ~$0.001 |
+| **7. Data Completeness** | Session ends with no symptoms, no vitals, or no actionable clinical data collected | On session conclusion | Free |
 
 ### Nurse CTA Matrix
 
@@ -182,7 +194,7 @@ post-op-triage/
     tools.py                        # Conversationalist tool definitions + execution
     red_flags.py                    # 21-signal red flag matrix (typed dataclasses)
     clinical_knowledge.py           # Surgery timelines, med pharmacology, expected symptom ranges
-    guardrails.py                   # Five-layer safety system with expected-symptom cap
+    guardrails.py                   # Eight-layer safety system (regex + LLM + deterministic)
     synthetic_scenarios.py          # Few-shot reasoning examples for agents
     agents/
       conversationalist.py          # Patient-facing agent (Sonnet 4.5, tool-use loop)
@@ -228,6 +240,8 @@ tests/test_synthetic_scenarios.py    8 tests  — example structure and formatti
 | Conversationalist | ~$0.01 | Sonnet, 2-4 tool calls per turn |
 | Risk Assessor | ~$0.01-0.03 | Sonnet, 3-5 investigation calls |
 | Escalator | ~$0.001 | Haiku, single call (skipped for low-risk) |
+| Semantic Emergency (Layer 1b) | ~$0.001 | Haiku, runs every message |
+| Manipulation Detector (Layer 6) | ~$0.001 | Haiku, only if regex doesn't match |
 | **Total per message** | **~$0.02-0.04** | |
 | **Per conversation (10 msgs)** | **~$0.25** | |
 
